@@ -15,42 +15,6 @@ fn load_rom(abs_rom_location: []const u8, max_bytes: usize, allocator: Allocator
 pub fn main() !void {
     // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
     std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-
-    //  Get an allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer {
-        const deinit_status = gpa.deinit();
-        //fail test; can't try in defer as defer is executed after we return
-        if (deinit_status == .leak) expect(false) catch @panic("TEST FAIL");
-    }
-    //var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    //defer arena.deinit();
-    //const allocator = arena.allocator();
-
-    const boot_location = "F:\\Projects\\higan\\higan\\System\\Game Boy\\boot.dmg-1.rom";
-    const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Pokemon Red (UE) [S][!].gb";
-    const buffer_size = 2 * 1024 * 1024;
-
-    const boot_rom = try load_rom(boot_location, 256, std.heap.page_allocator);
-    defer allocator.free(boot_rom);
-
-    const cartridge_rom = try load_rom(rom_location, buffer_size, std.heap.page_allocator);
-    defer allocator.free(cartridge_rom);
-
-    //var device_rom = [];
-
-    var ram: [8 << 10 << 10]u8 = undefined;
-    @memset(&ram, 0);
-
-    var bus = Bus.init(ram[0..ram.len], cartridge_rom[0..cartridge_rom.len]);
-
-    var cpu = Cpu.init(boot_rom, &bus);
-
-    while (true) {
-        cpu.step();
-    }
-
     // stdout is for the actual output of your application, for example if you
     // are implementing gzip, then only the compressed bytes should be sent to
     // stdout, not any debugging messages.
@@ -61,7 +25,176 @@ pub fn main() !void {
     try stdout.print("Run `zig build test` to run the tests.\n", .{});
 
     try bw.flush(); // Don't forget to flush!
+
+    if (c.SDL_Init(c.SDL_INIT_VIDEO) != 0) {
+        c.SDL_Log("Unable to initialize SDL: %s", c.SDL_GetError());
+        return error.SDLInitializationFailed;
+    }
+    defer c.SDL_Quit();
+
+    const screen = c.SDL_CreateWindow("My Game Window", c.SDL_WINDOWPOS_UNDEFINED, c.SDL_WINDOWPOS_UNDEFINED, Gpu.RESOLUTION_WIDTH + 10 + Gpu.TILEDEBUG_WIDTH, Gpu.TILEDEBUG_HEIGHT, c.SDL_WINDOW_OPENGL) orelse
+        {
+            c.SDL_Log("Unable to create window: %s", c.SDL_GetError());
+            return error.SDLInitializationFailed;
+        };
+    defer c.SDL_DestroyWindow(screen);
+    c.SDL_SetWindowResizable(screen, 1);
+    c.SDL_SetWindowMinimumSize(screen, Gpu.RESOLUTION_WIDTH + 10 + Gpu.TILEDEBUG_WIDTH, Gpu.TILEDEBUG_HEIGHT);
+
+    const renderer = c.SDL_CreateRenderer(screen, -1, 0) orelse {
+        c.SDL_Log("Unable to create renderer: %s", c.SDL_GetError());
+        return error.SDLInitializationFailed;
+    };
+    defer c.SDL_DestroyRenderer(renderer);
+
+    var quit = false;
+
+    const gameTexture = c.SDL_CreateTexture(renderer, c.SDL_PIXELFORMAT_RGBA8888, c.SDL_TEXTUREACCESS_STREAMING, Gpu.RESOLUTION_WIDTH, Gpu.RESOLUTION_HEIGHT);
+    defer c.SDL_DestroyTexture(gameTexture);
+
+    //tiles_column = 16
+    //tiles_row = 24
+    //tiles 8x8
+    const tilesTexture = c.SDL_CreateTexture(
+        renderer,
+        c.SDL_PIXELFORMAT_RGBA8888,
+        c.SDL_TEXTUREACCESS_STREAMING,
+        Gpu.TILEDEBUG_WIDTH,
+        Gpu.TILEDEBUG_HEIGHT,
+    );
+    defer c.SDL_DestroyTexture(tilesTexture);
+
+    var emulator = try Emulator.Init();
+    defer emulator.close();
+
+    while (!quit) {
+        var event: c.SDL_Event = undefined;
+        while (c.SDL_PollEvent(&event) != 0) {
+            switch (event.type) {
+                c.SDL_QUIT => {
+                    quit = true;
+                },
+                else => {},
+            }
+        }
+
+        try emulator.run_until_frameready();
+
+        const pixels = emulator.getFrameBuffer();
+        const tilesPixels = emulator.snapshotTiles();
+        copy_framebuffer_to_SDL_tex(pixels, gameTexture);
+        copy_framebuffer_to_SDL_tex(tilesPixels, tilesTexture);
+
+        var screen_width: c_int = 0;
+        var screen_height: c_int = 0;
+        c.SDL_GetWindowSize(screen, @ptrCast(&screen_width), @ptrCast(&screen_height));
+        const ratio = @divTrunc(screen_height, Gpu.TILEDEBUG_HEIGHT);
+
+        _ = c.SDL_RenderClear(renderer);
+        const gameRect = c.SDL_Rect{ .x = 0, .y = 0, .w = Gpu.RESOLUTION_WIDTH * ratio, .h = Gpu.RESOLUTION_HEIGHT * ratio };
+        const tilesRect = c.SDL_Rect{ .x = Gpu.RESOLUTION_WIDTH * ratio + 10, .y = 0, .w = Gpu.TILEDEBUG_WIDTH * ratio, .h = Gpu.TILEDEBUG_HEIGHT * ratio };
+        _ = c.SDL_RenderCopy(renderer, gameTexture, null, &gameRect);
+        _ = c.SDL_RenderCopy(renderer, tilesTexture, null, &tilesRect);
+        c.SDL_RenderPresent(renderer);
+
+        c.SDL_Delay(10);
+    }
 }
+
+fn copy_framebuffer_to_SDL_tex(fbi: FrameBufferInfo, texture: ?*c.SDL_Texture) void {
+    const color_depth = 4;
+    const alpha: u8 = 255;
+    var pitch: c_int = 0;
+    var bytes: [*c]c_char = undefined;
+    _ = c.SDL_LockTexture(texture, null, @ptrCast(&bytes), @ptrCast(&pitch));
+    for (0..fbi.height) |y| {
+        for (0..fbi.width) |x| {
+            const fbc = fbi.framebuffer[(y * fbi.width + x)];
+
+            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth] = @bitCast(fbc);
+            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth + 1] = @bitCast(fbc);
+            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth + 2] = @bitCast(fbc);
+            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth + 3] = @bitCast(alpha);
+            //@memcpy(&bytes[(y * fbi.width + x) * @sizeOf(u8) * rgba.len], rgba);
+        }
+    }
+    c.SDL_UnlockTexture(texture);
+}
+
+const Emulator = struct {
+    //gpa: std.heap.DebugAllocator,
+    allocator: std.mem.Allocator,
+    cpu: *Cpu,
+    gpu: *Gpu,
+    boot_rom: []u8,
+    cartridge_rom: []u8,
+
+    pub fn Init() !Emulator {
+        //  Get an allocator
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        const allocator = gpa.allocator();
+        //var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        //defer arena.deinit();
+        //const allocator = arena.allocator();
+
+        const boot_location = "F:\\Projects\\higan\\higan\\System\\Game Boy\\boot.dmg-1.rom";
+        const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Pokemon Red (UE) [S][!].gb";
+        const buffer_size = 2 * 1024 * 1024;
+
+        const boot_rom = try load_rom(boot_location, 256, std.heap.page_allocator);
+        const cartridge_rom = try load_rom(rom_location, buffer_size, std.heap.page_allocator);
+
+        //var device_rom = [];
+
+        var ram: [8 << 10 << 10]u8 = undefined;
+        @memset(&ram, 0);
+
+        var gpu = Gpu.init(ram[0..ram.len]);
+        var bus = Bus.init(ram[0..ram.len], cartridge_rom[0..cartridge_rom.len]);
+
+        var cpu = Cpu.init(boot_rom, &bus);
+
+        return Emulator{
+            //.gpa = gpa,
+            .allocator = allocator,
+            .cpu = &cpu,
+            .gpu = &gpu,
+            .boot_rom = boot_rom,
+            .cartridge_rom = cartridge_rom,
+        };
+    }
+
+    pub fn close(self: Emulator) void {
+        self.allocator.free(self.cartridge_rom);
+        self.allocator.free(self.boot_rom);
+
+        //const deinit_status = self.gpa.deinit();
+        //fail test; can't try in defer as defer is executed after we return
+        //if (deinit_status == .leak) expect(false) catch @panic("TEST FAIL");
+    }
+
+    pub fn run_until_frameready(self: Emulator) !void {
+        var gpuResult = GpuStepResult.Normal;
+        while (gpuResult != GpuStepResult.FrameReady) {
+            const clocks = self.cpu.step();
+            gpuResult = self.gpu.step(clocks);
+        }
+    }
+
+    pub fn getFrameBuffer(self: Emulator) FrameBufferInfo {
+        return FrameBufferInfo{ .framebuffer = &self.gpu.framebuffer, .width = Gpu.RESOLUTION_WIDTH, .height = Gpu.RESOLUTION_HEIGHT };
+    }
+
+    pub fn snapshotTiles(self: Emulator) FrameBufferInfo {
+        return FrameBufferInfo{ .framebuffer = self.gpu.snapshotTiles(), .width = 16 * 8, .height = 24 * 8 };
+    }
+};
+
+const FrameBufferInfo = struct {
+    framebuffer: []u8,
+    width: u32,
+    height: u32,
+};
 
 const Bus = struct {
     ram: []u8,
@@ -171,80 +304,203 @@ const ArgInfo = enum { None, U8, U16 };
 const OpCodeInfo = struct {
     name: []const u8,
     code: u8,
-    length: u8,
-    cycles: u8,
     args: [2]ArgInfo,
-    f: *const fn (*Cpu) anyerror!void,
-    pub fn init(code: u8, name: []const u8, length: u8, cycles: u8, args: [2]ArgInfo, f: *const fn (*Cpu) anyerror!void) OpCodeInfo {
+    f: opFunc,
+    pub fn init(code: u8, name: []const u8, args: [2]ArgInfo, f: opFunc) OpCodeInfo {
         return OpCodeInfo{
             .name = name,
             .code = code,
-            .length = length,
-            .cycles = cycles,
             .args = args,
             .f = f,
         };
     }
 };
 
-fn NotImplemented(_: *Cpu) !void {
+fn NotImplemented(_: *Cpu) !mcycles {
     return error.NotImplemented;
 }
 
-fn nop(_: *Cpu) !void {}
+fn nop(_: *Cpu) !mcycles {
+    return 1;
+}
 
-fn load_d8_to_c(cpu: *Cpu) !void {
+fn inc_b(cpu: *Cpu) !mcycles {
+    cpu.r.s.b += 1;
+    cpu.r.s.f.z = if (cpu.r.s.b == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = if ((cpu.r.s.b & 0xFF) == 0) 1 else 0;
+    return 1;
+}
+
+fn dec_b(cpu: *Cpu) !mcycles {
+    cpu.r.s.b -= 1;
+    cpu.r.s.f.z = if (cpu.r.s.b == 0) 1 else 0;
+    cpu.r.s.f.n = 1;
+    cpu.r.s.f.h = if ((cpu.r.s.b & 0b1000_0000) == 1) 1 else 0;
+    return 1;
+}
+
+fn load_d8_to_b(cpu: *Cpu) !mcycles {
+    cpu.r.s.b = Cpu.fetch(cpu);
+    return 2;
+}
+
+fn inc_c(cpu: *Cpu) !mcycles {
+    cpu.r.s.c += 1;
+    cpu.r.s.f.z = if (cpu.r.s.c == 1) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = if ((cpu.r.s.c & 0x0F) == 0) 1 else 0;
+    return 1;
+}
+
+fn dec_c(cpu: *Cpu) !mcycles {
+    cpu.r.s.c -= 1;
+    cpu.r.s.f.z = if (cpu.r.s.c == 0) 1 else 0;
+    cpu.r.s.f.n = 1;
+    cpu.r.s.f.h = if ((cpu.r.s.c & 0b1000_0000) == 1) 1 else 0;
+    return 1;
+}
+
+fn load_d8_to_c(cpu: *Cpu) !mcycles {
     cpu.r.s.c = Cpu.fetch(cpu);
+    return 2;
 }
 
-fn load_a_to_b(cpu: *Cpu) !void {
+fn load_d16_to_de(cpu: *Cpu) !mcycles {
+    cpu.r.f.DE = Cpu.fetch16(cpu);
+    return 3;
+}
+
+fn inc_de(cpu: *Cpu) !mcycles {
+    cpu.r.f.DE += 1;
+    return 2;
+}
+
+fn rotate(cpu: *Cpu, data: *u8) void {
+    const carry: u1 = if (data.* & 0b1000_0000 != 0) 1 else 0;
+    const shifted = (data.* << 1);
+    const around = @as(u8, cpu.r.s.f.c);
+    data.* = shifted | around;
+
+    cpu.r.s.f.z = if (data.* == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 0;
+    cpu.r.s.f.c = carry;
+}
+
+fn rotate_left_a(cpu: *Cpu) !mcycles {
+    rotate(cpu, &cpu.r.s.a);
+    cpu.r.s.f.z = 0;
+    return 1;
+}
+
+fn load_a_to_b(cpu: *Cpu) !mcycles {
     cpu.r.s.b = cpu.r.s.a;
+    return 1;
 }
 
-fn load_D_to_b(cpu: *Cpu) !void {
+fn load_a_to_c(cpu: *Cpu) !mcycles {
+    cpu.r.s.c = cpu.r.s.a;
+    return 1;
+}
+
+fn load_D_to_b(cpu: *Cpu) !mcycles {
     cpu.r.s.b = cpu.r.s.d;
+    return 1;
 }
 
-fn load_d16_to_sp(cpu: *Cpu) !void {
+fn load_a_to_d(cpu: *Cpu) !mcycles {
+    cpu.r.s.d = cpu.r.s.a;
+    return 1;
+}
+
+fn load_a_to_h(cpu: *Cpu) !mcycles {
+    cpu.r.s.h = cpu.r.s.a;
+    return 1;
+}
+
+fn store_a_to_indirectHL(cpu: *Cpu) !mcycles {
+    cpu.store(cpu.r.f.HL, cpu.r.s.a);
+    return 2;
+}
+
+fn load_e_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.r.s.e;
+    return 1;
+}
+
+fn subtract_l_from_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a -= cpu.r.s.l;
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 1;
+    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) < (cpu.r.s.l & 0x0F)) 1 else 0;
+    cpu.r.s.f.c = if (cpu.r.s.a < cpu.r.s.l) 1 else 0;
+    return 1;
+}
+
+fn load_d16_to_sp(cpu: *Cpu) !mcycles {
     cpu.sp = cpu.fetch16();
+    return 3;
 }
 
-fn store_a_to_indirectHL_dec(cpu: *Cpu) !void {
+fn store_a_to_indirectHL_dec(cpu: *Cpu) !mcycles {
     cpu.store(cpu.r.f.HL, cpu.r.s.a);
     cpu.r.f.HL -= 1;
+    return 2;
 }
 
-fn load_d8_to_a(cpu: *Cpu) !void {
+fn load_indirectHL_dec_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.load(cpu.r.f.HL);
+    cpu.r.f.HL -= 1;
+    return 2;
+}
+
+fn dec_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a -= 1;
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 1;
+    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) == 0x0F) 1 else 0;
+    return 1;
+}
+
+fn load_d8_to_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a = Cpu.fetch(cpu);
+    return 2;
 }
 
-fn load_indirect16_to_a(cpu: *Cpu) !void {
+fn load_indirect16_to_a(cpu: *Cpu) !mcycles {
     const addr = Cpu.fetch16(cpu);
     cpu.r.s.a = cpu.load(addr);
+    return 4;
 }
 
-fn load_a_to_indirect16(cpu: *Cpu) !void {
+fn load_a_to_indirect16(cpu: *Cpu) !mcycles {
     const addr = Cpu.fetch16(cpu);
     cpu.store(addr, cpu.r.s.a);
+    return 4;
 }
 
-fn load_indirect8_to_a(cpu: *Cpu) !void {
+fn load_indirect8_to_a(cpu: *Cpu) !mcycles {
     const addr: u16 = 0xFF00 + @as(u16, Cpu.fetch(cpu));
     cpu.r.s.a = cpu.load(addr);
+    return 3;
 }
 
-fn load_a_to_indirect8(cpu: *Cpu) !void {
+fn load_a_to_indirect8(cpu: *Cpu) !mcycles {
     const addr: u16 = 0xFF00 + @as(u16, Cpu.fetch(cpu));
 
     cpu.store(addr, cpu.r.s.a);
+    return 3;
 }
 
-fn pop_to_HL(cpu: *Cpu) !void {
+fn pop_to_HL(cpu: *Cpu) !mcycles {
     cpu.r.f.HL = cpu.pop16();
+    return 3;
 }
 
-fn store_a_to_indirect_c(cpu: *Cpu) !void {
+fn store_a_to_indirect_c(cpu: *Cpu) !mcycles {
     cpu.store(0xFF00 + @as(u16, cpu.r.s.c), cpu.r.s.a);
+    return 2;
 }
 
 fn add_u8_as_signed_to_u16(dest: u8, pc: u16) u16 {
@@ -254,74 +510,135 @@ fn add_u8_as_signed_to_u16(dest: u8, pc: u16) u16 {
     return @intCast(new_pc_singed);
 }
 
-fn jmp(cpu: *Cpu) !void {
+fn pop_bc(cpu: *Cpu) !mcycles {
+    cpu.r.f.BC = cpu.pop16();
+    return 3;
+}
+
+fn jmp(cpu: *Cpu) !mcycles {
     const dest = Cpu.fetch16(cpu);
     cpu.pc = dest;
+    return 4;
 }
 
-fn jmp_s8(cpu: *Cpu) !void {
-    const dest = Cpu.fetch(cpu);
+fn push_bc(cpu: *Cpu) !mcycles {
+    cpu.push16(cpu.r.f.BC);
+    return 4;
+}
+
+fn return_from_call(cpu: *Cpu) !mcycles {
+    cpu.pc = cpu.pop16();
+    return 4;
+}
+
+fn jmp_s8(cpu: *Cpu) !mcycles {
+    const dest = cpu.fetch();
     cpu.pc = add_u8_as_signed_to_u16(dest, cpu.pc);
+    return 3;
 }
 
-fn jmp_nz_s8(cpu: *Cpu) !void {
-    const dest = Cpu.fetch(cpu);
+fn load_indirectDE_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.load(cpu.r.f.DE);
+    return 2;
+}
+
+fn load_d8_to_e(cpu: *Cpu) !mcycles {
+    cpu.r.s.e = cpu.fetch();
+    return 2;
+}
+
+fn jmp_nz_s8(cpu: *Cpu) !mcycles {
+    const dest = cpu.fetch();
+    var timing: mcycles = 2;
     if (cpu.r.s.f.z == 0) {
         cpu.pc = add_u8_as_signed_to_u16(dest, cpu.pc);
+        timing += 1;
     }
+    return timing;
 }
 
-fn load_d16_to_HL(cpu: *Cpu) !void {
+fn load_d16_to_HL(cpu: *Cpu) !mcycles {
     cpu.r.f.HL = Cpu.fetch16(cpu);
+    return 3;
 }
 
-fn jmp_if_zero(cpu: *Cpu) !void {
-    const dest = Cpu.fetch(cpu);
+fn store_a_to_IndirectHL_inc(cpu: *Cpu) !mcycles {
+    cpu.store(cpu.r.f.HL, cpu.r.s.a);
+    cpu.r.f.HL += 1;
+    return 2;
+}
+
+fn inc_HL(cpu: *Cpu) !mcycles {
+    cpu.r.f.HL += 1;
+    return 2;
+}
+
+fn jmp_if_zero(cpu: *Cpu) !mcycles {
+    const dest = cpu.fetch();
+    var timing: mcycles = 2;
     if (cpu.r.s.f.z == 1) {
         cpu.pc = add_u8_as_signed_to_u16(dest, cpu.pc);
+        timing += 1;
     }
+    return timing;
 }
 
-fn call16(cpu: *Cpu) !void {
+fn load_d8_to_l(cpu: *Cpu) !mcycles {
+    cpu.r.s.l = cpu.fetch();
+    return 2;
+}
+
+fn call16(cpu: *Cpu) !mcycles {
+    const dest = cpu.fetch16();
     cpu.push16(cpu.pc);
-    const dest = Cpu.fetch16(cpu);
     cpu.pc = dest;
+    return 6;
 }
 
-fn compare_immediate8_ra(cpu: *Cpu) !void {
+fn compare_immediate8_ra(cpu: *Cpu) !mcycles {
     const immediate = Cpu.fetch(cpu);
     cpu.r.s.f.z = if (cpu.r.s.a == immediate) 1 else 0;
     cpu.r.s.f.n = 1;
     cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) < (immediate & 0x0F)) 1 else 0;
     cpu.r.s.f.c = if (cpu.r.s.a < immediate) 1 else 0;
+    return 2;
 }
 
-fn xor_a_with_a(cpu: *Cpu) !void {
+fn xor_a_with_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a ^= cpu.r.s.a;
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    return 1;
 }
 
-fn disable_interrupts(cpu: *Cpu) !void {
+fn disable_interrupts(cpu: *Cpu) !mcycles {
     cpu.interrupt.enabled = false;
+    return 1;
 }
 
-fn shift_left_B(cpu: *Cpu) !void {
+fn rotate_left_c(cpu: *Cpu) !mcycles {
+    rotate(cpu, &cpu.r.s.c);
+    return 2;
+}
+
+fn shift_left_B(cpu: *Cpu) !mcycles {
     cpu.r.s.b = cpu.r.s.b << 1;
-    //Z N H C
     cpu.r.s.f.z = if (cpu.r.s.b == 0) 1 else 0;
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 0;
     cpu.r.s.f.c = if ((cpu.r.s.b >> 7) == 1) 1 else 0;
+    return 2;
 }
 
-fn copy_compl_bit7_to_z(cpu: *Cpu) !void {
+fn copy_compl_bit7_to_z(cpu: *Cpu) !mcycles {
     cpu.r.s.f.z = if ((cpu.r.s.h >> 7) != 1) 1 else 0;
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 1;
+    return 2;
 }
 
-fn reset_a_bit0(cpu: *Cpu) !void {
+fn reset_a_bit0(cpu: *Cpu) !mcycles {
     cpu.r.s.a &= 0xFE;
+    return 2;
 }
 
 const Interrupts = packed struct {
@@ -333,11 +650,14 @@ const Interrupts = packed struct {
     _: u3,
 };
 
-fn process_opcodetable(table: []const OpCodeInfo) struct { [256]OpCodeInfo, [256]*const fn (*Cpu) anyerror!void } {
+const mcycles = usize;
+const opFunc = *const fn (*Cpu) anyerror!mcycles;
+
+fn process_opcodetable(table: []const OpCodeInfo) struct { [256]OpCodeInfo, [256]opFunc } {
     const NoArgs = [_]ArgInfo{ .None, .None };
-    const err: OpCodeInfo = OpCodeInfo.init(0x00, "EXT ERR", 0, 0, NoArgs, &NotImplemented);
+    const err: OpCodeInfo = OpCodeInfo.init(0x00, "EXT ERR", NoArgs, &NotImplemented);
     var opcodetable: [256]OpCodeInfo = undefined;
-    var jmptable: [256]*const fn (*Cpu) anyerror!void = undefined;
+    var jmptable: [256]opFunc = undefined;
     for (0..255) |i| {
         opcodetable[i] = err;
         jmptable[i] = err.f;
@@ -401,9 +721,9 @@ const Cpu = struct {
     },
 
     opcodetable: [256]OpCodeInfo,
-    jmptable: [256]*const fn (*Cpu) anyerror!void,
+    jmptable: [256]opFunc,
     extended_opcodetable: [256]OpCodeInfo,
-    extended_jmptable: [256]*const fn (*Cpu) anyerror!void,
+    extended_jmptable: [256]opFunc,
 
     pub fn init(boot_rom: []const u8, bus: *Bus) Cpu {
         const NoArgs = [_]ArgInfo{ .None, .None };
@@ -411,35 +731,61 @@ const Cpu = struct {
         const Single16Arg = [_]ArgInfo{ .U16, .None };
 
         const opcodesInfo = [_]OpCodeInfo{
-            OpCodeInfo.init(0x00, "NOP", 0, 0, NoArgs, &nop),
-            OpCodeInfo.init(0x0e, "LD C, d8", 0, 0, NoArgs, &load_d8_to_c),
-            OpCodeInfo.init(0x18, "JR s8", 0, 0, Single8Arg, &jmp_s8),
-            OpCodeInfo.init(0x20, "JR NZ, s8", 0, 0, Single8Arg, &jmp_nz_s8),
-            OpCodeInfo.init(0x21, "LD HL, d16", 0, 0, Single16Arg, &load_d16_to_HL),
-            OpCodeInfo.init(0x28, "JR Z", 0, 0, Single8Arg, &jmp_if_zero),
-            OpCodeInfo.init(0x31, "LD SP, d16", 0, 0, Single16Arg, &load_d16_to_sp),
-            OpCodeInfo.init(0x32, "LD (HL-), A", 0, 0, NoArgs, &store_a_to_indirectHL_dec),
-            OpCodeInfo.init(0x3e, "LD A, d8", 0, 0, Single8Arg, &load_d8_to_a),
-            OpCodeInfo.init(0x47, "LD B, A", 0, 0, NoArgs, &load_a_to_b),
-            OpCodeInfo.init(0x50, "LD D, B", 0, 0, NoArgs, &load_D_to_b),
-            OpCodeInfo.init(0xAF, "XOR A", 0, 0, NoArgs, &xor_a_with_a),
-            OpCodeInfo.init(0xC3, "JMP", 0, 0, Single16Arg, &jmp),
-            //OpCodeInfo.init(0xCB, "Xtended", 0, 0, Single16Arg, &cb_extended),
-            OpCodeInfo.init(0xCD, "CALL a16", 0, 0, Single16Arg, &call16),
-            OpCodeInfo.init(0xE0, "LD (a8), A", 0, 0, Single8Arg, &load_a_to_indirect8),
-            OpCodeInfo.init(0xE1, "POP HL", 0, 0, NoArgs, &pop_to_HL),
-            OpCodeInfo.init(0xE2, "LD (C), A", 0, 0, NoArgs, &store_a_to_indirect_c),
-            OpCodeInfo.init(0xEA, "LD (a16), A", 0, 0, Single16Arg, &load_a_to_indirect16),
-            OpCodeInfo.init(0xF0, "LD A, (a8)", 0, 0, Single8Arg, &load_indirect8_to_a),
-            OpCodeInfo.init(0xF3, "DI", 0, 0, NoArgs, &disable_interrupts),
-            OpCodeInfo.init(0xFE, "CP A,", 0, 0, Single8Arg, &compare_immediate8_ra),
-            OpCodeInfo.init(0xFA, "LD A (a16)", 0, 0, Single16Arg, &load_indirect16_to_a),
+            OpCodeInfo.init(0x00, "NOP", NoArgs, &nop),
+            OpCodeInfo.init(0x04, "INC B", NoArgs, &inc_b),
+            OpCodeInfo.init(0x05, "DEC B", NoArgs, &dec_b),
+            OpCodeInfo.init(0x06, "LD B, d8", Single8Arg, &load_d8_to_b),
+            OpCodeInfo.init(0x0c, "INC C", NoArgs, &inc_c),
+            OpCodeInfo.init(0x0d, "DEC C", NoArgs, &dec_c),
+            OpCodeInfo.init(0x0e, "LD C, d8", NoArgs, &load_d8_to_c),
+            OpCodeInfo.init(0x11, "LD DE, d16", Single16Arg, &load_d16_to_de),
+            OpCodeInfo.init(0x13, "INC DE", NoArgs, &inc_de),
+            OpCodeInfo.init(0x17, "RLA", NoArgs, &rotate_left_a),
+            OpCodeInfo.init(0x18, "JR s8", Single8Arg, &jmp_s8),
+            OpCodeInfo.init(0x1A, "LD A,(DE)", NoArgs, &load_indirectDE_to_a),
+            OpCodeInfo.init(0x1E, "LD E, d8", Single8Arg, &load_d8_to_e),
+            OpCodeInfo.init(0x20, "JR NZ, s8", Single8Arg, &jmp_nz_s8),
+            OpCodeInfo.init(0x21, "LD HL, d16", Single16Arg, &load_d16_to_HL),
+            OpCodeInfo.init(0x22, "LD (HL+), A", NoArgs, &store_a_to_IndirectHL_inc),
+            OpCodeInfo.init(0x23, "INC HL", NoArgs, &inc_HL),
+            OpCodeInfo.init(0x28, "JR Z", Single8Arg, &jmp_if_zero),
+            OpCodeInfo.init(0x2e, "LD L, d8", Single8Arg, &load_d8_to_l),
+            OpCodeInfo.init(0x31, "LD SP, d16", Single16Arg, &load_d16_to_sp),
+            OpCodeInfo.init(0x32, "LD (HL-), A", NoArgs, &store_a_to_indirectHL_dec),
+            OpCodeInfo.init(0x3a, "LD A, (HL-)", Single8Arg, &load_indirectHL_dec_to_a),
+            OpCodeInfo.init(0x3d, "DEC A", NoArgs, &dec_a),
+            OpCodeInfo.init(0x3e, "LD A, d8", Single8Arg, &load_d8_to_a),
+            OpCodeInfo.init(0x47, "LD B, A", NoArgs, &load_a_to_b),
+            OpCodeInfo.init(0x4f, "LD C, A", NoArgs, &load_a_to_c),
+            OpCodeInfo.init(0x50, "LD D, B", NoArgs, &load_D_to_b),
+            OpCodeInfo.init(0x57, "LD D, A", NoArgs, &load_a_to_d),
+            OpCodeInfo.init(0x67, "LD H, A", NoArgs, &load_a_to_h),
+            OpCodeInfo.init(0x77, "LD (HL), A", NoArgs, &store_a_to_indirectHL),
+            OpCodeInfo.init(0x7b, "LD A, E", NoArgs, &load_e_to_a),
+            OpCodeInfo.init(0x95, "SUB L", NoArgs, &subtract_l_from_a),
+            //OpCodeInfo.init(0x96, "SUB (HL)", NoArgs, &subtract_),
+            OpCodeInfo.init(0xAF, "XOR A", NoArgs, &xor_a_with_a),
+            OpCodeInfo.init(0xC1, "POP BC", NoArgs, &pop_bc),
+            OpCodeInfo.init(0xC3, "JMP", Single16Arg, &jmp),
+            OpCodeInfo.init(0xC5, "PUSH BC", NoArgs, &push_bc),
+            OpCodeInfo.init(0xC9, "RET", NoArgs, &return_from_call),
+            //OpCodeInfo.init(0xCB, "Xtended", Single16Arg, &cb_extended),
+            OpCodeInfo.init(0xCD, "CALL a16", Single16Arg, &call16),
+            OpCodeInfo.init(0xE0, "LD (a8), A", Single8Arg, &load_a_to_indirect8),
+            OpCodeInfo.init(0xE1, "POP HL", NoArgs, &pop_to_HL),
+            OpCodeInfo.init(0xE2, "LD (C), A", NoArgs, &store_a_to_indirect_c),
+            OpCodeInfo.init(0xEA, "LD (a16), A", Single16Arg, &load_a_to_indirect16),
+            OpCodeInfo.init(0xF0, "LD A, (a8)", Single8Arg, &load_indirect8_to_a),
+            OpCodeInfo.init(0xF3, "DI", NoArgs, &disable_interrupts),
+            OpCodeInfo.init(0xFE, "CP A,", Single8Arg, &compare_immediate8_ra),
+            OpCodeInfo.init(0xFA, "LD A (a16)", Single16Arg, &load_indirect16_to_a),
         };
 
         const extended_opcodesInfo = [_]OpCodeInfo{
-            OpCodeInfo.init(0x20, "SLA B", 0, 0, NoArgs, &shift_left_B),
-            OpCodeInfo.init(0x7c, "BIT 7, H", 0, 0, NoArgs, &copy_compl_bit7_to_z),
-            OpCodeInfo.init(0x87, "RES 0, A", 0, 0, NoArgs, &reset_a_bit0),
+            OpCodeInfo.init(0x11, "RL C", NoArgs, &rotate_left_c),
+            OpCodeInfo.init(0x20, "SLA B", NoArgs, &shift_left_B),
+            OpCodeInfo.init(0x7c, "BIT 7, H", NoArgs, &copy_compl_bit7_to_z),
+            OpCodeInfo.init(0x87, "RES 0, A", NoArgs, &reset_a_bit0),
         };
 
         const opcodetable, const jmptable = process_opcodetable(&opcodesInfo);
@@ -592,23 +938,22 @@ const Cpu = struct {
         return @as(u16, high) << 8 | low;
     }
 
-    fn decode_and_execute(self: *Cpu, instruction: u8) void {
+    fn decode_and_execute(self: *Cpu, instruction: u8) mcycles {
         if (instruction == 0xCB) {
             const extended_instruction = self.fetch();
-            self.extended_jmptable[extended_instruction](self) catch {
+            return self.extended_jmptable[extended_instruction](self) catch {
                 std.debug.panic("Error decoding and executing ext opcode 0xCB, 0x{x:02}\n", .{extended_instruction});
             };
-            return;
         }
-        self.jmptable[instruction](self) catch {
+        return self.jmptable[instruction](self) catch {
             std.debug.panic("Error decoding and executing opcode 0x{x:02}\n", .{instruction});
         };
     }
 
-    pub fn step(self: *Cpu) void {
+    pub fn step(self: *Cpu) mcycles {
         self.print_trace();
         const instruction = self.fetch();
-        self.decode_and_execute(instruction);
+        return self.decode_and_execute(instruction);
     }
 
     fn execute_interrupt(comptime T: type) type {
@@ -671,6 +1016,196 @@ const Cpu = struct {
     }
 };
 
+const SpriteAttribute = struct {
+    y: u8,
+    x: u8,
+    tile_index: u8,
+    flags: packed struct {
+        cpalette: u2,
+        tile_vram: u1,
+        pallete: u1,
+        xflip: u1,
+        yflip: u1,
+        priority: u1,
+    },
+};
+
+const SpriteData = struct {
+    pattern: [16]u8,
+    fn get_pixel_color_index(self: SpriteData, x: u8, y: u8) u2 {
+        const row_high = self.pattern[y * 2];
+        const row_low = self.pattern[y * 2 + 1];
+
+        const pixel_low = std.math.shr(u8, row_low, x) & 0b1;
+        const pixel_high = std.math.shr(u8, row_high, x) & 0b1;
+        return @intCast((pixel_high << 1) | pixel_low);
+    }
+};
+
+const GpuStepResult = enum {
+    Normal,
+    FrameReady,
+};
+
+const Gpu = struct {
+    mode: u2,
+    mode_clocks: usize,
+    scanline: u8,
+    ram: []u8,
+
+    visibleSprites: [10]SpriteAttribute,
+    visibleSpritesCount: usize,
+
+    framebuffer: [RESOLUTION_WIDTH * RESOLUTION_HEIGHT]u8,
+    dbgTileFramebuffer: [16 * 8 * 24 * 8]u8,
+
+    pub fn init(ram: []u8) Gpu {
+        return Gpu{
+            .ram = ram,
+            .mode = 2,
+            .mode_clocks = 0,
+            .scanline = 0,
+            .visibleSprites = [_]SpriteAttribute{undefined} ** 10,
+            .visibleSpritesCount = 0,
+            .framebuffer = [_]u8{0} ** (RESOLUTION_WIDTH * RESOLUTION_HEIGHT),
+            .dbgTileFramebuffer = [_]u8{0} ** (TILEDEBUG_WIDTH * TILEDEBUG_HEIGHT),
+        };
+    }
+
+    const OAM_CLOCKS = 20;
+    const RASTER_CLOKS = 43;
+    const HBLANK_CLOKS = 51;
+    const VBLANK_CLOKS = 114 * 10;
+    const RESOLUTION_WIDTH = 160;
+    const RESOLUTION_HEIGHT = 144;
+    const TILEDEBUG_WIDTH = 16 * 8;
+    const TILEDEBUG_HEIGHT = 24 * 8;
+    //OAM (20 clocks)
+    //Raster (43+ clocks)
+    //H-Blank (51- clocks)
+    //scanline total (114 clocks)
+    //non V-Blan lines (144)
+    //v-blank lines(10)
+
+    pub fn step(self: *Gpu, cpuClocks: mcycles) GpuStepResult {
+        self.mode_clocks += cpuClocks;
+        switch (self.mode) {
+            0 => { //H-Blank
+                if (self.mode_clocks >= HBLANK_CLOKS) {
+                    self.mode_clocks %= HBLANK_CLOKS;
+                    if (self.scanline < 144) {
+                        self.scanline += 1;
+                        self.mode = 2;
+                    } else {
+                        self.mode = 1;
+                        self.scanline = 0;
+                        return GpuStepResult.FrameReady;
+                    }
+                }
+            },
+            1 => { //V-Blank
+                if (self.mode_clocks >= VBLANK_CLOKS) {
+                    self.mode_clocks %= VBLANK_CLOKS;
+                    self.mode = 2;
+                }
+            },
+            2 => { //OAM
+                if (self.mode_clocks >= OAM_CLOCKS) {
+                    self.mode_clocks %= OAM_CLOCKS;
+                    self.mode = 3;
+                    self.findVisibleSprites();
+                }
+            },
+            3 => { //raster
+                if (self.mode_clocks >= RASTER_CLOKS) {
+                    self.mode_clocks %= RASTER_CLOKS;
+                    self.mode = 0;
+                    self.drawscanline();
+                }
+            },
+        }
+        return GpuStepResult.Normal;
+    }
+
+    fn findVisibleSprites(self: *Gpu) void {
+        const sprite_attrbiute_table_begin = 0xFE00;
+        const sprite_attrbiute_table_end = 0xFE9F;
+        const sprite_attrbiute_table = self.ram[sprite_attrbiute_table_begin..sprite_attrbiute_table_end];
+        const sprite_aatribute = sliceCast(SpriteAttribute, sprite_attrbiute_table, 0, 40);
+
+        //TODO: support 16 height as well
+        const sprite_height = 8;
+
+        self.visibleSpritesCount = 0;
+        for (sprite_aatribute) |value| {
+            if (value.y > self.scanline) continue;
+            if (value.y + sprite_height <= self.scanline) continue;
+
+            self.visibleSprites[self.visibleSpritesCount] = value;
+            self.visibleSpritesCount += 1;
+            if (self.visibleSpritesCount == self.visibleSprites.len) break;
+        }
+    }
+
+    fn drawscanline(self: *Gpu) void {
+        const sprite_width = 8;
+        const sprite_table = self.ram[0x8000..0x8FFF];
+        const sprite_data = sliceCast(SpriteData, sprite_table, 0, 0xFF);
+        const shades = [_]u8{ 0, 63, 128, 255 };
+
+        for (0..RESOLUTION_WIDTH) |index| {
+            const i: u8 = @intCast(index);
+            for (0..self.visibleSpritesCount) |si| {
+                const sprite = self.visibleSprites[si];
+                //TODO: handle priority and x-ordering
+                if (sprite.x > i or sprite.x + sprite_width <= i) continue;
+                const sprite_x: u8 = i - sprite.x;
+                const sprite_y: u8 = self.scanline - sprite.y;
+                const sprite_pattern = sprite_data[sprite.tile_index];
+                const color_index = sprite_pattern.get_pixel_color_index(sprite_x, sprite_y);
+                const palette_table = if (sprite.flags.pallete == 0) self.ram[0xFF48] else self.ram[0xFF49];
+                const shade: u2 = @intCast((palette_table >> (color_index * 2)) & 0b11);
+                const framebuffer_index: usize = (@as(usize, self.scanline) * RESOLUTION_WIDTH) + index;
+                self.framebuffer[framebuffer_index] = shades[shade];
+            }
+        }
+    }
+    fn frameready(_: *Gpu) void {}
+
+    fn snapshotTiles(self: *Gpu) []u8 {
+        const sprite_width = 8;
+        const sprite_height = 8;
+        const tiles_colum = 16;
+        const fb_width = tiles_colum * 8;
+
+        const sprite_table = self.ram[0x8000..0x97FF];
+        const sprite_data = sliceCast(SpriteData, sprite_table, 0, 0xFF);
+        const shades = [_]u8{ 0, 63, 128, 255 };
+        for (sprite_data, 0..) |sprite, si| {
+            const fbGrid_x = si % tiles_colum;
+            const fbGrid_y = si / tiles_colum;
+            for (0..sprite_width) |x| {
+                for (0..sprite_height) |y| {
+                    const color_index: u2 = sprite.get_pixel_color_index(@intCast(x), @intCast(y));
+                    const framebuffer_y: usize = fbGrid_y * sprite_height + y;
+                    const framebuffer_x: usize = fbGrid_x * sprite_width + x;
+                    const framebuffer_index: usize = (framebuffer_y * fb_width) + framebuffer_x;
+                    self.dbgTileFramebuffer[framebuffer_index] = shades[color_index];
+                }
+            }
+        }
+        return &self.dbgTileFramebuffer;
+    }
+};
+
+fn sliceCast(comptime T: type, buffer: []const u8, offset: usize, count: usize) []T {
+    if (offset + count * @sizeOf(type) > buffer.len) unreachable;
+
+    const ptr = @intFromPtr(buffer.ptr) + offset;
+    const arrPtr: [*]T = @ptrFromInt(ptr);
+    return arrPtr[0..count];
+}
+
 test "simple test" {
     var list = std.ArrayList(i32).init(std.testing.allocator);
     defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
@@ -694,7 +1229,11 @@ test "fuzz example" {
 }
 
 const std = @import("std");
+const math = std.math;
 const Allocator = std.mem.Allocator;
+const c = @cImport({
+    @cInclude("SDL2/SDL.h");
+});
 
 // This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
 const lib = @import("zig_hello_world_lib");
