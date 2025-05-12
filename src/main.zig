@@ -959,7 +959,7 @@ const Cpu = struct {
     pub fn step(self: *Cpu) mcycles {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
-        self.print_trace();
+        //self.print_trace();
         const instruction = self.fetch();
         return self.decode_and_execute(instruction);
     }
@@ -1031,8 +1031,8 @@ const SpriteAttribute = struct {
     x: u8,
     tile_index: u8,
     flags: packed struct {
-        cpalette: u2,
-        tile_vram: u1,
+        cpalette: u2, //(CGB only)
+        tile_vram: u1, //VRAM Bank (CGB only)
         pallete: u1,
         xflip: u1,
         yflip: u1,
@@ -1043,8 +1043,8 @@ const SpriteAttribute = struct {
 const SpriteData = struct {
     pattern: [16]u8,
     fn get_pixel_color_index(self: SpriteData, x: u8, y: u8) u2 {
-        const row_high = self.pattern[y * 2 + 1];
-        const row_low = self.pattern[y * 2];
+        const row_high = self.pattern[y * 2];
+        const row_low = self.pattern[y * 2 + 1];
 
         const pixel_low = std.math.shr(u8, row_low, x) & 0b1;
         const pixel_high = std.math.shr(u8, row_high, x) & 0b1;
@@ -1160,11 +1160,44 @@ const Gpu = struct {
     }
 
     fn drawscanline(self: *Gpu) void {
-        const sprite_width = 8;
-        const sprite_table = self.ram[0x8000..0x8FFF];
-        const sprite_data = sliceCast(SpriteData, sprite_table, 0, 0xFF);
+        const tile_width = 8;
+        const tile_height = 8;
         const shades = [_]u8{ 0, 63, 128, 255 };
 
+        const tile_data_vram = self.ram[0x8000..0x8FFF];
+        const tile_data = sliceCast(SpriteData, tile_data_vram, 0, 0xFFF);
+
+        //Draw BG
+        const bg_map_1 = self.ram[0x9800..0x9BFF];
+        //const bg_map_2 = self.ram[0x9C00..0x9FFF];
+        for (bg_map_1, 0..) |tile_index, i| {
+            const tile_x = i % 32;
+            const tile_y = i / 32;
+            const tile = tile_data[tile_index];
+
+            if (tile_y * tile_height > self.scanline or tile_y * tile_height + tile_height <= self.scanline) continue; //TODO: optimize so we dont have to check and continue here
+            if (tile_x * tile_width > RESOLUTION_WIDTH) continue;
+
+            const y: u8 = self.scanline % tile_height;
+
+            for (0..tile_width) |x| {
+                const framebuffer_x = tile_x * 8 + x;
+                if (framebuffer_x >= RESOLUTION_WIDTH) break;
+                const color_index = tile.get_pixel_color_index(@intCast(x), y);
+                //const palette_table = if (sprite.flags.pallete == 0) self.ram[0xFF48] else self.ram[0xFF49];
+                //const shade: u2 = @intCast((palette_table >> (color_index * 2)) & 0b11);
+                //if (shade == 0) continue; //transparency
+                const framebuffer_index: usize = (@as(usize, self.scanline) * RESOLUTION_WIDTH) + framebuffer_x;
+                if (framebuffer_index >= self.framebuffer.len)
+                    break;
+                self.framebuffer[framebuffer_index] = shades[color_index];
+            }
+        }
+
+        //Draw Window
+
+        //draw sprites
+        const sprite_width = 8;
         for (0..RESOLUTION_WIDTH) |index| {
             const i: u8 = @intCast(index);
             for (0..self.visibleSpritesCount) |si| {
@@ -1173,10 +1206,11 @@ const Gpu = struct {
                 if (sprite.x > i or sprite.x + sprite_width <= i) continue;
                 const sprite_x: u8 = i - sprite.x;
                 const sprite_y: u8 = self.scanline - sprite.y;
-                const sprite_pattern = sprite_data[sprite.tile_index];
+                const sprite_pattern = tile_data[sprite.tile_index];
                 const color_index = sprite_pattern.get_pixel_color_index(sprite_x, sprite_y);
                 const palette_table = if (sprite.flags.pallete == 0) self.ram[0xFF48] else self.ram[0xFF49];
                 const shade: u2 = @intCast((palette_table >> (color_index * 2)) & 0b11);
+                if (shade == 0) continue; //transparency
                 const framebuffer_index: usize = (@as(usize, self.scanline) * RESOLUTION_WIDTH) + index;
                 self.framebuffer[framebuffer_index] = shades[shade];
             }
