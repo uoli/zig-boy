@@ -233,6 +233,17 @@ const Bus = struct {
             0...0x3FFF => {
                 return self.cartridgerom[address];
             },
+            0xC000...0xCFFF => { //wram bank 0
+                //TODO: do we need to split ram from wram?
+                return self.ram[address];
+            },
+            0xD000...0xDFFF => { //wram bank 1
+                //TODO: do we need to split ram from wram?
+                return self.ram[address];
+            },
+            0xFF40 => {
+                return @bitCast(self.gpu.lcd_control);
+            },
             0xFF42 => {
                 return self.gpu.scroll_y;
             },
@@ -261,10 +272,14 @@ const Bus = struct {
                 //TODO: do we need to split ram from vram?
                 self.ram[address] = value;
             },
-            0xC000...0xCFFF => {
+            0xC000...0xCFFF => { //wram bank 0
+                //TODO: do we need to split ram from wram?
                 self.ram[address] = value;
             },
-
+            0xD000...0xDFFF => { //wram bank 1
+                //TODO: do we need to split ram from wram?
+                self.ram[address] = value;
+            },
             0xFF40 => {
                 self.gpu.lcd_control = @bitCast(value);
             },
@@ -381,6 +396,11 @@ fn nop(_: *Cpu) !mcycles {
     return 1;
 }
 
+fn load_d16_to_bc(cpu: *Cpu) !mcycles {
+    cpu.r.f.BC = cpu.fetch16();
+    return 3;
+}
+
 fn inc_b(cpu: *Cpu) !mcycles {
     cpu.r.s.b +%= 1;
     cpu.r.s.f.z = if (cpu.r.s.b == 0) 1 else 0;
@@ -397,8 +417,16 @@ fn dec_b(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+fn dec_bc(cpu: *Cpu) !mcycles {
+    cpu.r.f.BC -%= 1;
+    cpu.r.s.f.z = if (cpu.r.f.BC == 0) 1 else 0;
+    cpu.r.s.f.n = 1;
+    cpu.r.s.f.h = if ((cpu.r.f.BC & 0x0f) == 0x0f) 1 else 0;
+    return 1;
+}
+
 fn load_d8_to_b(cpu: *Cpu) !mcycles {
-    cpu.r.s.b = Cpu.fetch(cpu);
+    cpu.r.s.b = cpu.fetch();
     return 2;
 }
 
@@ -419,12 +447,12 @@ fn dec_c(cpu: *Cpu) !mcycles {
 }
 
 fn load_d8_to_c(cpu: *Cpu) !mcycles {
-    cpu.r.s.c = Cpu.fetch(cpu);
+    cpu.r.s.c = cpu.fetch();
     return 2;
 }
 
 fn load_d16_to_de(cpu: *Cpu) !mcycles {
-    cpu.r.f.DE = Cpu.fetch16(cpu);
+    cpu.r.f.DE = cpu.fetch16();
     return 3;
 }
 
@@ -439,7 +467,7 @@ fn dec_d(cpu: *Cpu) !mcycles {
 }
 
 fn load_d8_to_d(cpu: *Cpu) !mcycles {
-    cpu.r.s.d = Cpu.fetch(cpu);
+    cpu.r.s.d = cpu.fetch();
     return 2;
 }
 
@@ -493,6 +521,11 @@ fn store_a_to_indirectHL(cpu: *Cpu) !mcycles {
 
 fn load_b_to_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a = cpu.r.s.b;
+    return 1;
+}
+
+fn load_d_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.r.s.d;
     return 1;
 }
 
@@ -550,6 +583,11 @@ fn store_a_to_indirectHL_dec(cpu: *Cpu) !mcycles {
     return 2;
 }
 
+fn store_d8_to_indirectHL(cpu: *Cpu) !mcycles {
+    cpu.store(cpu.r.f.HL, cpu.fetch());
+    return 3;
+}
+
 fn load_indirectHL_dec_to_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a = cpu.load(cpu.r.f.HL);
     cpu.r.f.HL -= 1;
@@ -601,6 +639,15 @@ fn pop_to_HL(cpu: *Cpu) !mcycles {
 
 fn store_a_to_indirect_c(cpu: *Cpu) !mcycles {
     cpu.store(0xFF00 + @as(u16, cpu.r.s.c), cpu.r.s.a);
+    return 2;
+}
+
+fn and_d8_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a &= cpu.fetch();
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 1;
+    cpu.r.s.f.c = 0;
     return 2;
 }
 
@@ -711,6 +758,16 @@ fn call16(cpu: *Cpu) !mcycles {
     return 6;
 }
 
+fn pop_de(cpu: *Cpu) !mcycles {
+    cpu.r.f.DE = cpu.pop16();
+    return 3;
+}
+
+fn push_de(cpu: *Cpu) !mcycles {
+    cpu.push16(cpu.r.f.DE);
+    return 4;
+}
+
 fn compare_immediate8_ra(cpu: *Cpu) !mcycles {
     const immediate = Cpu.fetch(cpu);
     cpu.r.s.f.z = if (cpu.r.s.a == immediate) 1 else 0;
@@ -722,6 +779,15 @@ fn compare_immediate8_ra(cpu: *Cpu) !mcycles {
 
 fn xor_a_with_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a ^= cpu.r.s.a;
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 0;
+    cpu.r.s.f.c = 0;
+    return 1;
+}
+
+fn or_c_with_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a |= cpu.r.s.c;
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 0;
@@ -843,9 +909,11 @@ const Cpu = struct {
 
         const opcodesInfo = [_]OpCodeInfo{
             OpCodeInfo.init(0x00, "NOP", NoArgs, &nop),
+            OpCodeInfo.init(0x01, "LD BC, d16", Single16Arg, &load_d16_to_bc),
             OpCodeInfo.init(0x04, "INC B", NoArgs, &inc_b),
             OpCodeInfo.init(0x05, "DEC B", NoArgs, &dec_b),
             OpCodeInfo.init(0x06, "LD B, d8", Single8Arg, &load_d8_to_b),
+            OpCodeInfo.init(0x0b, "DEC BC", NoArgs, &dec_bc),
             OpCodeInfo.init(0x0c, "INC C", NoArgs, &inc_c),
             OpCodeInfo.init(0x0d, "DEC C", NoArgs, &dec_c),
             OpCodeInfo.init(0x0e, "LD C, d8", NoArgs, &load_d8_to_c),
@@ -867,6 +935,7 @@ const Cpu = struct {
             OpCodeInfo.init(0x2e, "LD L, d8", Single8Arg, &load_d8_to_l),
             OpCodeInfo.init(0x31, "LD SP, d16", Single16Arg, &load_d16_to_sp),
             OpCodeInfo.init(0x32, "LD (HL-), A", NoArgs, &store_a_to_indirectHL_dec),
+            OpCodeInfo.init(0x36, "LD (HL), d8", Single8Arg, &store_d8_to_indirectHL),
             OpCodeInfo.init(0x3a, "LD A, (HL-)", Single8Arg, &load_indirectHL_dec_to_a),
             OpCodeInfo.init(0x3d, "DEC A", NoArgs, &dec_a),
             OpCodeInfo.init(0x3e, "LD A, d8", Single8Arg, &load_d8_to_a),
@@ -877,6 +946,7 @@ const Cpu = struct {
             OpCodeInfo.init(0x67, "LD H, A", NoArgs, &load_a_to_h),
             OpCodeInfo.init(0x77, "LD (HL), A", NoArgs, &store_a_to_indirectHL),
             OpCodeInfo.init(0x78, "LD A, B", NoArgs, &load_b_to_a),
+            OpCodeInfo.init(0x7a, "LD A, D", NoArgs, &load_d_to_a),
             OpCodeInfo.init(0x7b, "LD A, E", NoArgs, &load_e_to_a),
             OpCodeInfo.init(0x7c, "LD A, H", NoArgs, &load_h_to_a),
             OpCodeInfo.init(0x7d, "LD A, L", NoArgs, &load_l_to_a),
@@ -885,6 +955,7 @@ const Cpu = struct {
             OpCodeInfo.init(0x95, "SUB L", NoArgs, &subtract_l_from_a),
             //OpCodeInfo.init(0x96, "SUB (HL)", NoArgs, &subtract_),
             OpCodeInfo.init(0xAF, "XOR A", NoArgs, &xor_a_with_a),
+            OpCodeInfo.init(0xB1, "OR C", NoArgs, &or_c_with_a),
             OpCodeInfo.init(0xBE, "CP (HL)", NoArgs, &compare_indirectHL_to_a),
             OpCodeInfo.init(0xC1, "POP BC", NoArgs, &pop_bc),
             OpCodeInfo.init(0xC3, "JMP", Single16Arg, &jmp),
@@ -892,9 +963,12 @@ const Cpu = struct {
             OpCodeInfo.init(0xC9, "RET", NoArgs, &return_from_call),
             //OpCodeInfo.init(0xCB, "Xtended", Single16Arg, &cb_extended),
             OpCodeInfo.init(0xCD, "CALL a16", Single16Arg, &call16),
+            OpCodeInfo.init(0xD1, "POP DE", NoArgs, &pop_de),
+            OpCodeInfo.init(0xD5, "PUSH DE", NoArgs, &push_de),
             OpCodeInfo.init(0xE0, "LD (a8), A", Single8Arg, &load_a_to_indirect8),
             OpCodeInfo.init(0xE1, "POP HL", NoArgs, &pop_to_HL),
             OpCodeInfo.init(0xE2, "LD (C), A", NoArgs, &store_a_to_indirect_c),
+            OpCodeInfo.init(0xE6, "AND d8", Single8Arg, &and_d8_to_a),
             OpCodeInfo.init(0xEA, "LD (a16), A", Single16Arg, &load_a_to_indirect16),
             OpCodeInfo.init(0xF0, "LD A, (a8)", Single8Arg, &load_indirect8_to_a),
             OpCodeInfo.init(0xF3, "DI", NoArgs, &disable_interrupts),
@@ -1066,7 +1140,8 @@ const Cpu = struct {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
         {
-            const watched_pc = 0x100;
+            //const watched_pc = 0x100;
+            const watched_pc = 0xFFFF;
             if (self.pc == watched_pc)
                 self.enable_trace = true;
 
