@@ -157,13 +157,14 @@ const Emulator = struct {
 
         const boot_rom = try load_rom(boot_location, 256, std.heap.page_allocator);
         const cartridge_rom = try load_rom(rom_location, buffer_size, std.heap.page_allocator);
+        var cartridge = Cartridge.init(cartridge_rom[0..]);
 
         //var device_rom = [];
 
         var ram: [8 << 10 << 10]u8 = undefined;
         @memset(&ram, 0);
 
-        var bus = Bus.init(ram[0..ram.len], cartridge_rom[0..cartridge_rom.len]);
+        var bus = Bus.init(ram[0..ram.len], &cartridge);
         var gpu = Gpu.init(&bus, ram[0..ram.len]);
         var cpu = Cpu.init(boot_rom, &bus);
         bus.connectGpu(&gpu);
@@ -212,15 +213,121 @@ const FrameBufferInfo = struct {
     height: u32,
 };
 
+const CartridgeType = enum(u8) {
+    ROM_ONLY,
+    MBC1,
+    MBC1_RAM,
+    MBC1_RAM_BATTERY,
+    //??
+    MBC2,
+    MBC2_BATTERY,
+    //??
+    ROM_RAM,
+    ROM_RAM_BATTERY,
+    //??
+    MM01,
+    MM01_RAM,
+    MM01_RAM_BATTERY,
+    //??
+    MBC3_TIMER_BATTERY,
+    MBC3_TIMER_RAM_BATTERY,
+    MBC3,
+    MBC3_RAM,
+    MBC3_RAM_BATTERY,
+    //??
+    MBC4,
+    MBC4_RAM,
+    MBC4_RAM_BATTERY,
+    //??
+    MBC5,
+    MBC5_RAM,
+    MBC5_RAM_BATTERY,
+    MBC5_RUMBLE,
+    MBC5_RUMBLE_RAM,
+    MBC5_RUMBLE_RAM_BATTERY,
+    _,
+};
+
+const CartridgeTypeMap = [_]?CartridgeType{
+    CartridgeType.ROM_ONLY,
+    CartridgeType.MBC1,
+    CartridgeType.MBC1_RAM,
+    CartridgeType.MBC1_RAM_BATTERY,
+    null,
+    CartridgeType.MBC2,
+    CartridgeType.MBC2_BATTERY,
+    null,
+    CartridgeType.ROM_RAM,
+    CartridgeType.ROM_RAM_BATTERY,
+    null,
+    CartridgeType.MM01,
+    CartridgeType.MM01_RAM,
+    CartridgeType.MM01_RAM_BATTERY,
+    null,
+    CartridgeType.MBC3_TIMER_BATTERY,
+    CartridgeType.MBC3_TIMER_RAM_BATTERY,
+    CartridgeType.MBC3,
+    CartridgeType.MBC3_RAM,
+    CartridgeType.MBC3_RAM_BATTERY,
+    null,
+    CartridgeType.MBC4,
+    CartridgeType.MBC4_RAM,
+    CartridgeType.MBC4_RAM_BATTERY,
+    null,
+    CartridgeType.MBC5,
+    CartridgeType.MBC5_RAM,
+    CartridgeType.MBC5_RAM_BATTERY,
+    CartridgeType.MBC5_RUMBLE,
+    CartridgeType.MBC5_RUMBLE_RAM,
+    CartridgeType.MBC5_RUMBLE_RAM_BATTERY,
+};
+
+const Cartridge = struct {
+    rom: []const u8,
+    cartridge_type: CartridgeType,
+    bank_selected: u8,
+    fn init(rom: []const u8) Cartridge {
+        const cartridge_type = CartridgeTypeMap[rom[0x147]];
+        std.debug.assert(cartridge_type.? == CartridgeType.MBC3_RAM_BATTERY);
+        return Cartridge{
+            .rom = rom,
+            .cartridge_type = cartridge_type.?,
+            .bank_selected = 1,
+        };
+    }
+
+    fn read(self: Cartridge, address: u16) u8 {
+        switch (address) {
+            0x0000...0x3FFF => return self.rom[address],
+            0x4000...0x7FFF => {
+                var addr_delta = address - 0x4000;
+                addr_delta += @as(u16, self.bank_selected) * 0x4000;
+                return self.rom[addr_delta];
+            },
+            else => std.debug.panic("unhandled cartridge read address 0x{x}", .{address}),
+        }
+        return self.rom[address];
+    }
+
+    fn write(self: *Cartridge, address: u16, value: u8) void {
+        switch (address) {
+            0x2000...0x3FFF => {
+                self.bank_selected = if (value == 0) 1 else value;
+            },
+            else => std.debug.panic("unhandled cartridge write address 0x{x}", .{address}),
+        }
+    }
+};
+
 const Bus = struct {
     ram: []u8,
-    cartridgerom: []const u8,
+    cartridge: *Cartridge,
     gpu: *Gpu = undefined,
 
-    pub fn init(ram: []u8, cartridge_rom: []const u8) Bus {
+    pub fn init(ram: []u8, cartridge: *Cartridge) Bus {
         return Bus{
             .ram = ram,
-            .cartridgerom = cartridge_rom,
+            .cartridge = cartridge,
         };
     }
 
@@ -230,8 +337,8 @@ const Bus = struct {
 
     pub fn read(self: Bus, address: u16) u8 {
         return switch (address) {
-            0...0x3FFF => {
-                return self.cartridgerom[address];
+            0...0x7FFF => {
+                return self.cartridge.read(address);
             },
             0xC000...0xCFFF => { //wram bank 0
                 //TODO: do we need to split ram from wram?
@@ -266,7 +373,7 @@ const Bus = struct {
     pub fn write(self: Bus, address: u16, value: u8) void {
         switch (address) {
             0...0x7FFF => {
-                @panic("Cannot write to ROM");
+                self.cartridge.write(address, value);
             },
             0x8000...0x9FFF => { //vram
                 //TODO: do we need to split ram from vram?
