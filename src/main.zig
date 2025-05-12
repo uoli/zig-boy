@@ -153,10 +153,10 @@ const Emulator = struct {
         var ram: [8 << 10 << 10]u8 = undefined;
         @memset(&ram, 0);
 
-        var gpu = Gpu.init(ram[0..ram.len]);
         var bus = Bus.init(ram[0..ram.len], cartridge_rom[0..cartridge_rom.len]);
-
+        var gpu = Gpu.init(&bus, ram[0..ram.len]);
         var cpu = Cpu.init(boot_rom, &bus);
+        bus.connectGpu(&gpu);
 
         return Emulator{
             //.gpa = gpa,
@@ -205,6 +205,7 @@ const FrameBufferInfo = struct {
 const Bus = struct {
     ram: []u8,
     cartridgerom: []const u8,
+    gpu: *Gpu = undefined,
 
     pub fn init(ram: []u8, cartridge_rom: []const u8) Bus {
         return Bus{
@@ -213,12 +214,20 @@ const Bus = struct {
         };
     }
 
+    fn connectGpu(self: *Bus, gpu: *Gpu) void {
+        self.gpu = gpu;
+    }
+
     pub fn read(self: Bus, address: u16) u8 {
         return switch (address) {
             0...0x3FFF => {
                 return self.cartridgerom[address];
             },
-            0xFF00...0xFFFF => { // HRAM
+            0xFF44 => {
+                return self.gpu.ly;
+                //return 0;
+            },
+            0xFF80...0xFFFF => { // HRAM
                 return self.ram[address];
             },
             else => {
@@ -229,7 +238,7 @@ const Bus = struct {
 
     pub fn write(self: Bus, address: u16, value: u8) void {
         switch (address) {
-            0...0x3FFF => {
+            0...0x7FFF => {
                 @panic("Cannot write to ROM");
             },
             0x8000...0x9FFF => { //vram
@@ -239,7 +248,33 @@ const Bus = struct {
             0xC000...0xCFFF => {
                 self.ram[address] = value;
             },
-            0xFF00...0xFFFF => { // HRAM
+
+            0xFF40 => {
+                self.gpu.lcd_control = @bitCast(value);
+            },
+            0xFF42 => {
+                self.gpu.scroll_y = value;
+            },
+            0xFF43 => {
+                self.gpu.scroll_x = value;
+            },
+            0xFF47 => {
+                self.gpu.background_palette = @bitCast(value);
+            },
+            0xFF48 => {
+                self.gpu.object_palette[0] = @bitCast(value);
+            },
+            0xFF49 => {
+                self.gpu.object_palette[1] = @bitCast(value);
+            },
+            0xFF4A => {
+                self.gpu.window_y = value;
+            },
+            0xFF4B => {
+                self.gpu.window_x = value;
+            },
+
+            0xFF80...0xFFFF => { // HRAM
                 self.ram[address] = value;
             },
             else => {
@@ -684,38 +719,46 @@ const Cpu = struct {
     sp: u16,
     pc: u16,
     interrupt: struct { enabled: bool, interrupt_flag: Interrupts, interrupt_enabled: Interrupts },
-    scroll_x: u8,
-    scroll_y: u8,
-    window_x: u8,
-    window_y: u8,
+    // scroll_x: u8,
+    // scroll_y: u8,
+    // window_x: u8,
+    // window_y: u8,
     disable_boot_rom: u8,
     timer: struct { modulo: u8, control: packed struct {
         clock_select: u2,
         timer_stop: bool,
         _: u5,
     } },
-    lcd_control: packed struct {
-        bg_display: bool,
-        obj_display_enable: bool,
-        obj_size: bool,
-        bg_tilemap_display_select: bool,
-        bg_and_window_tile_select: bool,
-        window_display_enable: bool,
-        window_tilemap_display_select: bool,
-        lcd_dissplay_enable: bool,
+    sound_flags: packed struct {
+        sound_1_enabled: u1,
+        sound_2_enabled: u1,
+        sound_3_enabled: u1,
+        sound_4_enabled: u1,
+        _: u3,
+        enabled: u1,
     },
-    background_palette: packed struct {
-        color0: u2,
-        color1: u2,
-        color2: u2,
-        color3: u2,
-    },
-    object_palette: [2]packed struct {
-        _: u2,
-        color1: u2,
-        color2: u2,
-        color3: u2,
-    },
+    // lcd_control: packed struct {
+    //     bg_display: bool,
+    //     obj_display_enable: bool,
+    //     obj_size: bool,
+    //     bg_tilemap_display_select: bool,
+    //     bg_and_window_tile_select: bool,
+    //     window_display_enable: bool,
+    //     window_tilemap_display_select: bool,
+    //     lcd_dissplay_enable: bool,
+    // },
+    // background_palette: packed struct {
+    //     color0: u2,
+    //     color1: u2,
+    //     color2: u2,
+    //     color3: u2,
+    // },
+    // object_palette: [2]packed struct {
+    //     _: u2,
+    //     color1: u2,
+    //     color2: u2,
+    //     color3: u2,
+    // },
     serial_data_transfer: struct {
         data: u8,
         control: packed struct {
@@ -827,14 +870,22 @@ const Cpu = struct {
                     ._ = undefined,
                 },
             },
-            .scroll_x = 0,
-            .scroll_y = 0,
-            .window_x = 0,
-            .window_y = 0,
             .timer = .{ .modulo = 0, .control = .{ .clock_select = 0, .timer_stop = false, ._ = undefined } },
-            .lcd_control = @bitCast(@as(u8, 0x91)),
-            .background_palette = .{ .color0 = 0, .color1 = 0, .color2 = 0, .color3 = 0 },
-            .object_palette = .{ .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 }, .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 } },
+            // .scroll_x = 0,
+            // .scroll_y = 0,
+            // .window_x = 0,
+            // .window_y = 0,
+            // .lcd_control = @bitCast(@as(u8, 0x91)),
+            // .background_palette = .{ .color0 = 0, .color1 = 0, .color2 = 0, .color3 = 0 },
+            // .object_palette = .{ .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 }, .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 } },
+            .sound_flags = .{
+                .sound_1_enabled = 0,
+                .sound_2_enabled = 0,
+                .sound_3_enabled = 0,
+                .sound_4_enabled = 0,
+                ._ = 0,
+                .enabled = 0,
+            },
             .serial_data_transfer = .{
                 .data = 0,
                 .control = .{
@@ -876,32 +927,14 @@ const Cpu = struct {
             0xFF07 => {
                 self.timer.control = @bitCast(value);
             },
-            0xFF40 => {
-                self.lcd_control = @bitCast(value);
+            0xFF11...0xFF25 => {
+                //No-Impl Sound related I/O ops
             },
-            0xFF42 => {
-                self.scroll_y = value;
-            },
-            0xFF43 => {
-                self.scroll_x = value;
-            },
-            0xFF47 => {
-                self.background_palette = @bitCast(value);
-            },
-            0xFF48 => {
-                self.object_palette[0] = @bitCast(value);
-            },
-            0xFF49 => {
-                self.object_palette[1] = @bitCast(value);
+            0xFF26 => {
+                self.sound_flags.enabled = if (value & 0b1000_0000 == 0b1000_0000) 1 else 0;
             },
             0xFF50 => {
                 self.disable_boot_rom = value;
-            },
-            0xFF4A => {
-                self.window_y = value;
-            },
-            0xFF4B => {
-                self.window_x = value;
             },
             0xFF0F => {
                 self.interrupt.interrupt_flag = @bitCast(value);
@@ -959,7 +992,7 @@ const Cpu = struct {
     pub fn step(self: *Cpu) mcycles {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
-        //self.print_trace();
+        self.print_trace();
         const instruction = self.fetch();
         return self.decode_and_execute(instruction);
     }
@@ -1060,8 +1093,37 @@ const GpuStepResult = enum {
 const Gpu = struct {
     mode: u2,
     mode_clocks: usize,
-    scanline: u8,
+    //scanline: u8,
     ram: []u8,
+    bus: *Bus,
+
+    ly: u8,
+    scroll_x: u8,
+    scroll_y: u8,
+    window_x: u8,
+    window_y: u8,
+    lcd_control: packed struct {
+        bg_display: bool,
+        obj_display_enable: bool,
+        obj_size: bool,
+        bg_tilemap_display_select: bool,
+        bg_and_window_tile_select: bool,
+        window_display_enable: bool,
+        window_tilemap_display_select: bool,
+        lcd_dissplay_enable: bool,
+    },
+    background_palette: packed struct {
+        color0: u2,
+        color1: u2,
+        color2: u2,
+        color3: u2,
+    },
+    object_palette: [2]packed struct {
+        _: u2,
+        color1: u2,
+        color2: u2,
+        color3: u2,
+    },
 
     visibleSprites: [10]SpriteAttribute,
     visibleSpritesCount: usize,
@@ -1069,16 +1131,24 @@ const Gpu = struct {
     framebuffer: [RESOLUTION_WIDTH * RESOLUTION_HEIGHT]u8,
     dbgTileFramebuffer: [16 * 8 * 24 * 8]u8,
 
-    pub fn init(ram: []u8) Gpu {
+    pub fn init(bus: *Bus, ram: []u8) Gpu {
         return Gpu{
             .ram = ram,
+            .bus = bus,
             .mode = 2,
             .mode_clocks = 0,
-            .scanline = 0,
+            .ly = 0,
             .visibleSprites = [_]SpriteAttribute{undefined} ** 10,
             .visibleSpritesCount = 0,
             .framebuffer = [_]u8{0} ** (RESOLUTION_WIDTH * RESOLUTION_HEIGHT),
             .dbgTileFramebuffer = [_]u8{0} ** (TILEDEBUG_WIDTH * TILEDEBUG_HEIGHT),
+            .scroll_x = 0,
+            .scroll_y = 0,
+            .window_x = 0,
+            .window_y = 0,
+            .lcd_control = @bitCast(@as(u8, 0x91)),
+            .background_palette = .{ .color0 = 0, .color1 = 0, .color2 = 0, .color3 = 0 },
+            .object_palette = .{ .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 }, .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 } },
         };
     }
 
@@ -1105,12 +1175,12 @@ const Gpu = struct {
             0 => { //H-Blank
                 if (self.mode_clocks >= HBLANK_CLOKS) {
                     self.mode_clocks %= HBLANK_CLOKS;
-                    if (self.scanline < 144) {
-                        self.scanline += 1;
+                    if (self.ly < 144) {
+                        self.ly += 1;
                         self.mode = 2;
                     } else {
                         self.mode = 1;
-                        self.scanline = 0;
+                        self.ly = 0;
                         return GpuStepResult.FrameReady;
                     }
                 }
@@ -1150,8 +1220,8 @@ const Gpu = struct {
 
         self.visibleSpritesCount = 0;
         for (sprite_aatribute) |value| {
-            if (value.y > self.scanline) continue;
-            if (value.y + sprite_height <= self.scanline) continue;
+            if (value.y > self.ly) continue;
+            if (value.y + sprite_height <= self.ly) continue;
 
             self.visibleSprites[self.visibleSpritesCount] = value;
             self.visibleSpritesCount += 1;
@@ -1175,10 +1245,13 @@ const Gpu = struct {
             const tile_y = i / 32;
             const tile = tile_data[tile_index];
 
-            if (tile_y * tile_height > self.scanline or tile_y * tile_height + tile_height <= self.scanline) continue; //TODO: optimize so we dont have to check and continue here
+            //const scrolled_y = self.ly + self.scroll_y;
+            const scrolled_y = self.ly;
+
+            if (tile_y * tile_height > scrolled_y or tile_y * tile_height + tile_height <= scrolled_y) continue; //TODO: optimize so we dont have to check and continue here
             if (tile_x * tile_width > RESOLUTION_WIDTH) continue;
 
-            const y: u8 = self.scanline % tile_height;
+            const y: u8 = scrolled_y % tile_height;
 
             for (0..tile_width) |x| {
                 const framebuffer_x = tile_x * 8 + x;
@@ -1187,7 +1260,7 @@ const Gpu = struct {
                 //const palette_table = if (sprite.flags.pallete == 0) self.ram[0xFF48] else self.ram[0xFF49];
                 //const shade: u2 = @intCast((palette_table >> (color_index * 2)) & 0b11);
                 //if (shade == 0) continue; //transparency
-                const framebuffer_index: usize = (@as(usize, self.scanline) * RESOLUTION_WIDTH) + framebuffer_x;
+                const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + framebuffer_x;
                 if (framebuffer_index >= self.framebuffer.len)
                     break;
                 self.framebuffer[framebuffer_index] = shades[color_index];
@@ -1205,13 +1278,13 @@ const Gpu = struct {
                 //TODO: handle priority and x-ordering
                 if (sprite.x > i or sprite.x + sprite_width <= i) continue;
                 const sprite_x: u8 = i - sprite.x;
-                const sprite_y: u8 = self.scanline - sprite.y;
+                const sprite_y: u8 = self.ly - sprite.y;
                 const sprite_pattern = tile_data[sprite.tile_index];
                 const color_index = sprite_pattern.get_pixel_color_index(sprite_x, sprite_y);
                 const palette_table = if (sprite.flags.pallete == 0) self.ram[0xFF48] else self.ram[0xFF49];
                 const shade: u2 = @intCast((palette_table >> (color_index * 2)) & 0b11);
                 if (shade == 0) continue; //transparency
-                const framebuffer_index: usize = (@as(usize, self.scanline) * RESOLUTION_WIDTH) + index;
+                const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + index;
                 self.framebuffer[framebuffer_index] = shades[shade];
             }
         }
