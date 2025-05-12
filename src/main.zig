@@ -243,8 +243,7 @@ const Bus = struct {
                 return self.gpu.ly;
                 //return 0;
             },
-
-            0xFF80...0xFFFF => { // HRAM
+            0xFF80...0xFFFE => { // HRAM
                 return self.ram[address];
             },
             else => {
@@ -291,7 +290,7 @@ const Bus = struct {
                 self.gpu.window_x = value;
             },
 
-            0xFF80...0xFFFF => { // HRAM
+            0xFF80...0xFFFE => { // HRAM
                 self.ram[address] = value;
             },
             else => {
@@ -724,6 +723,9 @@ fn compare_immediate8_ra(cpu: *Cpu) !mcycles {
 fn xor_a_with_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a ^= cpu.r.s.a;
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 0;
+    cpu.r.s.f.c = 0;
     return 1;
 }
 
@@ -804,6 +806,7 @@ const Cpu = struct {
     sp: u16,
     pc: u16,
     interrupt: struct { enabled: bool, interrupt_flag: Interrupts, interrupt_enabled: Interrupts },
+    enable_trace: bool,
     disable_boot_rom: u8,
     timer: struct { modulo: u8, control: packed struct {
         clock_select: u2,
@@ -916,6 +919,7 @@ const Cpu = struct {
             .r = Registers.init(),
             .sp = 0xFFFE,
             .pc = 0x0,
+            .enable_trace = false,
             .opcodetable = opcodetable,
             .jmptable = jmptable,
             .extended_opcodetable = extended_opcodetable,
@@ -964,7 +968,14 @@ const Cpu = struct {
         if (self.disable_boot_rom == 0 and address < 0x0100) {
             return self.boot_rom[address];
         }
-        return self.bus.read(address);
+        switch (address) {
+            0xFFFF => {
+                return @bitCast(self.interrupt.interrupt_enabled);
+            },
+            else => {
+                return self.bus.read(address);
+            },
+        }
     }
 
     fn load16(self: *Cpu, address: u16) u16 {
@@ -1054,7 +1065,14 @@ const Cpu = struct {
     pub fn step(self: *Cpu) mcycles {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
-        self.print_trace();
+        {
+            const watched_pc = 0x100;
+            if (self.pc == watched_pc)
+                self.enable_trace = true;
+
+            if (self.enable_trace)
+                self.print_trace();
+        }
         const instruction = self.fetch();
         return self.decode_and_execute(instruction);
     }
@@ -1217,7 +1235,7 @@ const Gpu = struct {
     const OAM_CLOCKS = 20;
     const RASTER_CLOKS = 43;
     const HBLANK_CLOKS = 51;
-    const VBLANK_CLOKS = 114 * 10;
+    const VBLANK_LINE_CLOCKS = 114;
     const RESOLUTION_WIDTH = 160;
     const RESOLUTION_HEIGHT = 144;
     const TILEDEBUG_WIDTH = 16 * 8;
@@ -1236,15 +1254,18 @@ const Gpu = struct {
                         self.mode = 2;
                     } else {
                         self.mode = 1;
-                        self.ly = 0;
                         return GpuStepResult.FrameReady;
                     }
                 }
             },
             1 => { //V-Blank
-                if (self.mode_clocks >= VBLANK_CLOKS) {
-                    self.mode_clocks %= VBLANK_CLOKS;
-                    self.mode = 2;
+                if (self.mode_clocks >= VBLANK_LINE_CLOCKS) {
+                    self.mode_clocks %= VBLANK_LINE_CLOCKS;
+                    self.ly += 1;
+                    if (self.ly == 154) {
+                        self.mode = 2;
+                        self.ly = 0;
+                    }
                 }
             },
             2 => { //OAM
