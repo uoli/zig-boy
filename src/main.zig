@@ -70,6 +70,8 @@ pub fn main() !void {
     var emulator = try Emulator.Init();
     defer emulator.close();
 
+    var prev_time = try std.time.Instant.now();
+
     while (!quit) {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event) != 0) {
@@ -82,6 +84,10 @@ pub fn main() !void {
         }
         const zone = tracy.beginZone(@src(), .{ .name = "window loop" });
         defer zone.end();
+
+        //const delta_time = (try std.time.Instant.now()).since(prev_time);
+        prev_time = try std.time.Instant.now();
+
         try emulator.run_until_frameready();
 
         const pixels = emulator.getFrameBuffer();
@@ -101,7 +107,11 @@ pub fn main() !void {
         _ = c.SDL_RenderCopy(renderer, tilesTexture, null, &tilesRect);
         c.SDL_RenderPresent(renderer);
 
-        //c.SDL_Delay(10);
+        const target_frame_time_ms = 16;
+        const delta_time_ms = (try std.time.Instant.now()).since(prev_time) / std.time.ns_per_ms;
+        if (delta_time_ms < target_frame_time_ms) {
+            c.SDL_Delay(target_frame_time_ms - @as(u32, @intCast(delta_time_ms)));
+        }
     }
 }
 
@@ -223,10 +233,17 @@ const Bus = struct {
             0...0x3FFF => {
                 return self.cartridgerom[address];
             },
+            0xFF42 => {
+                return self.gpu.scroll_y;
+            },
+            0xFF43 => {
+                return self.gpu.scroll_x;
+            },
             0xFF44 => {
                 return self.gpu.ly;
                 //return 0;
             },
+
             0xFF80...0xFFFF => { // HRAM
                 return self.ram[address];
             },
@@ -417,6 +434,11 @@ fn inc_de(cpu: *Cpu) !mcycles {
     return 2;
 }
 
+fn dec_d(cpu: *Cpu) !mcycles {
+    cpu.r.s.d -= 1;
+    return 1;
+}
+
 fn rotate(cpu: *Cpu, data: *u8) void {
     const carry: u1 = if (data.* & 0b1000_0000 != 0) 1 else 0;
     const shifted = (data.* << 1);
@@ -470,12 +492,26 @@ fn load_e_to_a(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+fn load_h_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.r.s.h;
+    return 1;
+}
+
 fn subtract_l_from_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a -= cpu.r.s.l;
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
     cpu.r.s.f.n = 1;
     cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) < (cpu.r.s.l & 0x0F)) 1 else 0;
     cpu.r.s.f.c = if (cpu.r.s.a < cpu.r.s.l) 1 else 0;
+    return 1;
+}
+
+fn subtract_b_from_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a -= cpu.r.s.b;
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 1;
+    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) < (cpu.r.s.b & 0x0F)) 1 else 0;
+    cpu.r.s.f.c = if (cpu.r.s.a < cpu.r.s.b) 1 else 0;
     return 1;
 }
 
@@ -582,6 +618,13 @@ fn load_indirectDE_to_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a = cpu.load(cpu.r.f.DE);
     return 2;
 }
+fn dec_e(cpu: *Cpu) !mcycles {
+    cpu.r.s.e -= 1;
+    cpu.r.s.f.z = if (cpu.r.s.e == 0) 1 else 0;
+    cpu.r.s.f.n = 1;
+    cpu.r.s.f.h = if ((cpu.r.s.e & 0x0F) == 0x0F) 1 else 0;
+    return 1;
+}
 
 fn load_d8_to_e(cpu: *Cpu) !mcycles {
     cpu.r.s.e = cpu.fetch();
@@ -612,6 +655,14 @@ fn store_a_to_IndirectHL_inc(cpu: *Cpu) !mcycles {
 fn inc_HL(cpu: *Cpu) !mcycles {
     cpu.r.f.HL += 1;
     return 2;
+}
+
+fn inc_H(cpu: *Cpu) !mcycles {
+    cpu.r.s.h += 1;
+    cpu.r.s.f.z = if (cpu.r.s.h == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = if ((cpu.r.s.h & 0x0F) == 0) 1 else 0;
+    return 1;
 }
 
 fn jmp_if_zero(cpu: *Cpu) !mcycles {
@@ -719,10 +770,6 @@ const Cpu = struct {
     sp: u16,
     pc: u16,
     interrupt: struct { enabled: bool, interrupt_flag: Interrupts, interrupt_enabled: Interrupts },
-    // scroll_x: u8,
-    // scroll_y: u8,
-    // window_x: u8,
-    // window_y: u8,
     disable_boot_rom: u8,
     timer: struct { modulo: u8, control: packed struct {
         clock_select: u2,
@@ -737,28 +784,6 @@ const Cpu = struct {
         _: u3,
         enabled: u1,
     },
-    // lcd_control: packed struct {
-    //     bg_display: bool,
-    //     obj_display_enable: bool,
-    //     obj_size: bool,
-    //     bg_tilemap_display_select: bool,
-    //     bg_and_window_tile_select: bool,
-    //     window_display_enable: bool,
-    //     window_tilemap_display_select: bool,
-    //     lcd_dissplay_enable: bool,
-    // },
-    // background_palette: packed struct {
-    //     color0: u2,
-    //     color1: u2,
-    //     color2: u2,
-    //     color3: u2,
-    // },
-    // object_palette: [2]packed struct {
-    //     _: u2,
-    //     color1: u2,
-    //     color2: u2,
-    //     color3: u2,
-    // },
     serial_data_transfer: struct {
         data: u8,
         control: packed struct {
@@ -789,14 +814,17 @@ const Cpu = struct {
             OpCodeInfo.init(0x0e, "LD C, d8", NoArgs, &load_d8_to_c),
             OpCodeInfo.init(0x11, "LD DE, d16", Single16Arg, &load_d16_to_de),
             OpCodeInfo.init(0x13, "INC DE", NoArgs, &inc_de),
+            OpCodeInfo.init(0x15, "DEC D", NoArgs, &dec_d),
             OpCodeInfo.init(0x17, "RLA", NoArgs, &rotate_left_a),
             OpCodeInfo.init(0x18, "JR s8", Single8Arg, &jmp_s8),
             OpCodeInfo.init(0x1A, "LD A,(DE)", NoArgs, &load_indirectDE_to_a),
+            OpCodeInfo.init(0x1D, "DEC E", NoArgs, &dec_e),
             OpCodeInfo.init(0x1E, "LD E, d8", Single8Arg, &load_d8_to_e),
             OpCodeInfo.init(0x20, "JR NZ, s8", Single8Arg, &jmp_nz_s8),
             OpCodeInfo.init(0x21, "LD HL, d16", Single16Arg, &load_d16_to_HL),
             OpCodeInfo.init(0x22, "LD (HL+), A", NoArgs, &store_a_to_IndirectHL_inc),
             OpCodeInfo.init(0x23, "INC HL", NoArgs, &inc_HL),
+            OpCodeInfo.init(0x24, "INC H", NoArgs, &inc_H),
             OpCodeInfo.init(0x28, "JR Z", Single8Arg, &jmp_if_zero),
             OpCodeInfo.init(0x2e, "LD L, d8", Single8Arg, &load_d8_to_l),
             OpCodeInfo.init(0x31, "LD SP, d16", Single16Arg, &load_d16_to_sp),
@@ -811,6 +839,8 @@ const Cpu = struct {
             OpCodeInfo.init(0x67, "LD H, A", NoArgs, &load_a_to_h),
             OpCodeInfo.init(0x77, "LD (HL), A", NoArgs, &store_a_to_indirectHL),
             OpCodeInfo.init(0x7b, "LD A, E", NoArgs, &load_e_to_a),
+            OpCodeInfo.init(0x7c, "LD A, H", NoArgs, &load_h_to_a),
+            OpCodeInfo.init(0x90, "SUB B", NoArgs, &subtract_b_from_a),
             OpCodeInfo.init(0x95, "SUB L", NoArgs, &subtract_l_from_a),
             //OpCodeInfo.init(0x96, "SUB (HL)", NoArgs, &subtract_),
             OpCodeInfo.init(0xAF, "XOR A", NoArgs, &xor_a_with_a),
@@ -871,13 +901,6 @@ const Cpu = struct {
                 },
             },
             .timer = .{ .modulo = 0, .control = .{ .clock_select = 0, .timer_stop = false, ._ = undefined } },
-            // .scroll_x = 0,
-            // .scroll_y = 0,
-            // .window_x = 0,
-            // .window_y = 0,
-            // .lcd_control = @bitCast(@as(u8, 0x91)),
-            // .background_palette = .{ .color0 = 0, .color1 = 0, .color2 = 0, .color3 = 0 },
-            // .object_palette = .{ .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 }, .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 } },
             .sound_flags = .{
                 .sound_1_enabled = 0,
                 .sound_2_enabled = 0,
@@ -992,7 +1015,7 @@ const Cpu = struct {
     pub fn step(self: *Cpu) mcycles {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
-        self.print_trace();
+        //self.print_trace();
         const instruction = self.fetch();
         return self.decode_and_execute(instruction);
     }
@@ -1055,7 +1078,7 @@ const Cpu = struct {
             }
         }
 
-        std.debug.print("[CPU] 0x{x:04} 0x{x:02} {s: <6}{s} AF:0x{x:04} BC:0x{x:04} DE:0x{x:04} HL:0x{x:04} SP:0x{x:04} {s}\n", .{ self.pc, opInfo.code, opInfo.name, args_str, self.r.f.AF, self.r.f.BC, self.r.f.DE, self.r.f.HL, self.sp, self.r.debug_flag_str() });
+        std.debug.print("[CPU] 0x{x:04} 0x{x:02} {s: <12}{s} AF:0x{x:04} BC:0x{x:04} DE:0x{x:04} HL:0x{x:04} SP:0x{x:04} {s}\n", .{ self.pc, opInfo.code, opInfo.name, args_str, self.r.f.AF, self.r.f.BC, self.r.f.DE, self.r.f.HL, self.sp, self.r.debug_flag_str() });
     }
 };
 
@@ -1245,8 +1268,8 @@ const Gpu = struct {
             const tile_y = i / 32;
             const tile = tile_data[tile_index];
 
-            //const scrolled_y = self.ly + self.scroll_y;
-            const scrolled_y = self.ly;
+            const scrolled_y = (self.ly + self.scroll_y) % 255;
+            //const scrolled_y = self.ly;
 
             if (tile_y * tile_height > scrolled_y or tile_y * tile_height + tile_height <= scrolled_y) continue; //TODO: optimize so we dont have to check and continue here
             if (tile_x * tile_width > RESOLUTION_WIDTH) continue;
