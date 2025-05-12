@@ -110,7 +110,7 @@ pub fn main() !void {
         const target_frame_time_ms = 16;
         const delta_time_ms = (try std.time.Instant.now()).since(prev_time) / std.time.ns_per_ms;
         if (delta_time_ms < target_frame_time_ms) {
-            c.SDL_Delay(target_frame_time_ms - @as(u32, @intCast(delta_time_ms)));
+            //c.SDL_Delay(target_frame_time_ms - @as(u32, @intCast(delta_time_ms)));
         }
     }
 }
@@ -383,7 +383,7 @@ fn nop(_: *Cpu) !mcycles {
 }
 
 fn inc_b(cpu: *Cpu) !mcycles {
-    cpu.r.s.b += 1;
+    cpu.r.s.b +%= 1;
     cpu.r.s.f.z = if (cpu.r.s.b == 0) 1 else 0;
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = if ((cpu.r.s.b & 0xFF) == 0) 1 else 0;
@@ -391,7 +391,7 @@ fn inc_b(cpu: *Cpu) !mcycles {
 }
 
 fn dec_b(cpu: *Cpu) !mcycles {
-    cpu.r.s.b -= 1;
+    cpu.r.s.b -%= 1;
     cpu.r.s.f.z = if (cpu.r.s.b == 0) 1 else 0;
     cpu.r.s.f.n = 1;
     cpu.r.s.f.h = if ((cpu.r.s.b & 0b1000_0000) == 1) 1 else 0;
@@ -404,7 +404,7 @@ fn load_d8_to_b(cpu: *Cpu) !mcycles {
 }
 
 fn inc_c(cpu: *Cpu) !mcycles {
-    cpu.r.s.c += 1;
+    cpu.r.s.c +%= 1;
     cpu.r.s.f.z = if (cpu.r.s.c == 1) 1 else 0;
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = if ((cpu.r.s.c & 0x0F) == 0) 1 else 0;
@@ -412,7 +412,7 @@ fn inc_c(cpu: *Cpu) !mcycles {
 }
 
 fn dec_c(cpu: *Cpu) !mcycles {
-    cpu.r.s.c -= 1;
+    cpu.r.s.c -%= 1;
     cpu.r.s.f.z = if (cpu.r.s.c == 0) 1 else 0;
     cpu.r.s.f.n = 1;
     cpu.r.s.f.h = if ((cpu.r.s.c & 0b1000_0000) == 1) 1 else 0;
@@ -430,13 +430,18 @@ fn load_d16_to_de(cpu: *Cpu) !mcycles {
 }
 
 fn inc_de(cpu: *Cpu) !mcycles {
-    cpu.r.f.DE += 1;
+    cpu.r.f.DE +%= 1;
     return 2;
 }
 
 fn dec_d(cpu: *Cpu) !mcycles {
-    cpu.r.s.d -= 1;
+    cpu.r.s.d -%= 1;
     return 1;
+}
+
+fn load_d8_to_d(cpu: *Cpu) !mcycles {
+    cpu.r.s.d = Cpu.fetch(cpu);
+    return 2;
 }
 
 fn rotate(cpu: *Cpu, data: *u8) void {
@@ -487,6 +492,11 @@ fn store_a_to_indirectHL(cpu: *Cpu) !mcycles {
     return 2;
 }
 
+fn load_b_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.r.s.b;
+    return 1;
+}
+
 fn load_e_to_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a = cpu.r.s.e;
     return 1;
@@ -495,6 +505,21 @@ fn load_e_to_a(cpu: *Cpu) !mcycles {
 fn load_h_to_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a = cpu.r.s.h;
     return 1;
+}
+
+fn load_l_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.r.s.l;
+    return 1;
+}
+
+fn add_a_to_hl_indirect(cpu: *Cpu) !mcycles {
+    const val = cpu.load(cpu.r.f.HL);
+    cpu.r.s.a, cpu.r.s.f.c = @addWithOverflow(cpu.r.s.a, val);
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) + (val & 0x0F) > 0xF) 1 else 0; //TODO: find simpler way?
+
+    return 2;
 }
 
 fn subtract_l_from_a(cpu: *Cpu) !mcycles {
@@ -702,6 +727,15 @@ fn xor_a_with_a(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+fn compare_indirectHL_to_a(cpu: *Cpu) !mcycles {
+    const hl_content = cpu.load(cpu.r.f.HL);
+    cpu.r.s.f.z = if (hl_content == cpu.r.s.a) 1 else 0;
+    cpu.r.s.f.n = 1;
+    cpu.r.s.f.h = if ((hl_content & 0x0F) < (cpu.r.s.a & 0x0F)) 1 else 0;
+    cpu.r.s.f.c = if (hl_content < cpu.r.s.a) 1 else 0;
+    return 2;
+}
+
 fn disable_interrupts(cpu: *Cpu) !mcycles {
     cpu.interrupt.enabled = false;
     return 1;
@@ -815,6 +849,7 @@ const Cpu = struct {
             OpCodeInfo.init(0x11, "LD DE, d16", Single16Arg, &load_d16_to_de),
             OpCodeInfo.init(0x13, "INC DE", NoArgs, &inc_de),
             OpCodeInfo.init(0x15, "DEC D", NoArgs, &dec_d),
+            OpCodeInfo.init(0x16, "LD D, d8", Single8Arg, &load_d8_to_d),
             OpCodeInfo.init(0x17, "RLA", NoArgs, &rotate_left_a),
             OpCodeInfo.init(0x18, "JR s8", Single8Arg, &jmp_s8),
             OpCodeInfo.init(0x1A, "LD A,(DE)", NoArgs, &load_indirectDE_to_a),
@@ -838,12 +873,16 @@ const Cpu = struct {
             OpCodeInfo.init(0x57, "LD D, A", NoArgs, &load_a_to_d),
             OpCodeInfo.init(0x67, "LD H, A", NoArgs, &load_a_to_h),
             OpCodeInfo.init(0x77, "LD (HL), A", NoArgs, &store_a_to_indirectHL),
+            OpCodeInfo.init(0x78, "LD A, B", NoArgs, &load_b_to_a),
             OpCodeInfo.init(0x7b, "LD A, E", NoArgs, &load_e_to_a),
             OpCodeInfo.init(0x7c, "LD A, H", NoArgs, &load_h_to_a),
+            OpCodeInfo.init(0x7d, "LD A, L", NoArgs, &load_l_to_a),
+            OpCodeInfo.init(0x86, "ADD A, (HL)", NoArgs, &add_a_to_hl_indirect),
             OpCodeInfo.init(0x90, "SUB B", NoArgs, &subtract_b_from_a),
             OpCodeInfo.init(0x95, "SUB L", NoArgs, &subtract_l_from_a),
             //OpCodeInfo.init(0x96, "SUB (HL)", NoArgs, &subtract_),
             OpCodeInfo.init(0xAF, "XOR A", NoArgs, &xor_a_with_a),
+            OpCodeInfo.init(0xBE, "CP (HL)", NoArgs, &compare_indirectHL_to_a),
             OpCodeInfo.init(0xC1, "POP BC", NoArgs, &pop_bc),
             OpCodeInfo.init(0xC3, "JMP", Single16Arg, &jmp),
             OpCodeInfo.init(0xC5, "PUSH BC", NoArgs, &push_bc),
@@ -1015,7 +1054,7 @@ const Cpu = struct {
     pub fn step(self: *Cpu) mcycles {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
-        //self.print_trace();
+        self.print_trace();
         const instruction = self.fetch();
         return self.decode_and_execute(instruction);
     }
@@ -1260,17 +1299,18 @@ const Gpu = struct {
         const tile_height = 8;
         const shades = [_]u8{ 0, 63, 128, 255 }; //this might need to be inverted
 
-        const tile_data_vram = self.ram[0x8000..0x8FFF];
+        const tile_data_vram = if (self.lcd_control.bg_and_window_tile_select) self.ram[0x8000..0x8FFF] else self.ram[0x8800..0x97FF];
         const tile_data = sliceCast(SpriteData, tile_data_vram, 0, 0xFFF);
 
-        std.debug.assert(self.lcd_control.bg_and_window_tile_select == true);
+        //std.debug.assert(self.lcd_control.bg_and_window_tile_select == true);
 
         //Draw BG
         const bg_map_1 = if (self.lcd_control.bg_tilemap_display_select == false) self.ram[0x9800..0x9BFF] else self.ram[0x9C00..0x9FFF];
         for (bg_map_1, 0..) |tile_index, i| {
             const tile_x = i % 32;
             const tile_y = i / 32;
-            const tile = tile_data[tile_index];
+            const tile_index_mapped = if (self.lcd_control.bg_and_window_tile_select) tile_index else (tile_index + 0x7F) % 0xFF;
+            const tile = tile_data[tile_index_mapped];
 
             const scrolled_y = (self.ly + self.scroll_y) % 255;
             //const scrolled_y = self.ly;
