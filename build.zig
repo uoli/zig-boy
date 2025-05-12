@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = std.fs;
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -44,6 +45,24 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseFast,
     });
     exe_mod.linkLibrary(sdl_dep.artifact("SDL2"));
+
+    const exe_options = b.addOptions();
+    exe_mod.addOptions("build_options", exe_options);
+
+    const tracy_enable =
+        b.option(bool, "tracy_enable", "Enable profiling") orelse
+        if (optimize == .Debug) true else false;
+    const tracy = b.dependency("tracy", .{
+        .target = target,
+        .optimize = optimize,
+        .tracy_enable = tracy_enable,
+    });
+
+    exe_mod.addImport("tracy", tracy.module("tracy"));
+    if (tracy_enable) {
+        exe_mod.linkLibrary(tracy.artifact("tracy"));
+        exe_mod.link_libcpp = true;
+    }
 
     // Modules can depend on one another using the `std.Build.Module.addImport` function.
     // This is what allows Zig source code to use `@import("foo")` where 'foo' is not a

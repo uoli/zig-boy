@@ -41,6 +41,10 @@
             .url = "git+https://github.com/allyourcodebase/SDL/?ref=HEAD#35d2548e41d5c3ea1e6bd22631b1ff1d352fd174",
             .hash = "SDL-2.32.6-JToi3zqUEgG6r4ADMT5x-s1d5htGsWVMCJorr3GWEvLw",
         },
+        .tracy = .{
+            .url = "git+https://github.com/tealsnow/zig-tracy/?ref=HEAD#4f23bca3e4f59604a8d298796030858677df3f53",
+            .hash = "tracy-0.0.9-Dn49mw9SAACCtNBeyyb3EOipVIAhYuoDI9bLBi3LDJh6",
+        },
     },
     .paths = .{
         "build.zig",

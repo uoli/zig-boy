@@ -13,6 +13,9 @@ fn load_rom(abs_rom_location: []const u8, max_bytes: usize, allocator: Allocator
 }
 
 pub fn main() !void {
+    tracy.setThreadName("Main");
+    defer tracy.message("Graceful main thread exit");
+
     // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
     std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
     // stdout is for the actual output of your application, for example if you
@@ -32,7 +35,7 @@ pub fn main() !void {
     }
     defer c.SDL_Quit();
 
-    const screen = c.SDL_CreateWindow("My Game Window", c.SDL_WINDOWPOS_UNDEFINED, c.SDL_WINDOWPOS_UNDEFINED, Gpu.RESOLUTION_WIDTH + 10 + Gpu.TILEDEBUG_WIDTH, Gpu.TILEDEBUG_HEIGHT, c.SDL_WINDOW_OPENGL) orelse
+    const screen = c.SDL_CreateWindow("My Game Window", c.SDL_WINDOWPOS_UNDEFINED, c.SDL_WINDOWPOS_UNDEFINED, (Gpu.RESOLUTION_WIDTH + 10 + Gpu.TILEDEBUG_WIDTH) * 2, Gpu.TILEDEBUG_HEIGHT * 2, c.SDL_WINDOW_OPENGL) orelse
         {
             c.SDL_Log("Unable to create window: %s", c.SDL_GetError());
             return error.SDLInitializationFailed;
@@ -77,7 +80,8 @@ pub fn main() !void {
                 else => {},
             }
         }
-
+        const zone = tracy.beginZone(@src(), .{ .name = "window loop" });
+        defer zone.end();
         try emulator.run_until_frameready();
 
         const pixels = emulator.getFrameBuffer();
@@ -97,7 +101,7 @@ pub fn main() !void {
         _ = c.SDL_RenderCopy(renderer, tilesTexture, null, &tilesRect);
         c.SDL_RenderPresent(renderer);
 
-        c.SDL_Delay(10);
+        //c.SDL_Delay(10);
     }
 }
 
@@ -111,10 +115,10 @@ fn copy_framebuffer_to_SDL_tex(fbi: FrameBufferInfo, texture: ?*c.SDL_Texture) v
         for (0..fbi.width) |x| {
             const fbc = fbi.framebuffer[(y * fbi.width + x)];
 
-            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth] = @bitCast(fbc);
-            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth + 1] = @bitCast(fbc);
-            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth + 2] = @bitCast(fbc);
-            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth + 3] = @bitCast(alpha);
+            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth] = @bitCast(alpha); //alpha
+            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth + 1] = @bitCast(fbc); //blue
+            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth + 2] = @bitCast(fbc); //green
+            bytes[(y * fbi.width + x) * @sizeOf(u8) * color_depth + 3] = @bitCast(fbc); //red
             //@memcpy(&bytes[(y * fbi.width + x) * @sizeOf(u8) * rgba.len], rgba);
         }
     }
@@ -174,6 +178,8 @@ const Emulator = struct {
     }
 
     pub fn run_until_frameready(self: Emulator) !void {
+        const zone = tracy.beginZone(@src(), .{ .name = "run_until_frameready" });
+        defer zone.end();
         var gpuResult = GpuStepResult.Normal;
         while (gpuResult != GpuStepResult.FrameReady) {
             const clocks = self.cpu.step();
@@ -951,6 +957,8 @@ const Cpu = struct {
     }
 
     pub fn step(self: *Cpu) mcycles {
+        const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
+        defer zone.end();
         self.print_trace();
         const instruction = self.fetch();
         return self.decode_and_execute(instruction);
@@ -982,6 +990,8 @@ const Cpu = struct {
     }
 
     pub fn print_trace(self: *Cpu) void {
+        const zone = tracy.beginZone(@src(), .{ .name = "cpu print_trace" });
+        defer zone.end();
         var tmp_ip = self.pc;
         var opcode = self.load(tmp_ip);
         tmp_ip += 1;
@@ -1033,8 +1043,8 @@ const SpriteAttribute = struct {
 const SpriteData = struct {
     pattern: [16]u8,
     fn get_pixel_color_index(self: SpriteData, x: u8, y: u8) u2 {
-        const row_high = self.pattern[y * 2];
-        const row_low = self.pattern[y * 2 + 1];
+        const row_high = self.pattern[y * 2 + 1];
+        const row_low = self.pattern[y * 2];
 
         const pixel_low = std.math.shr(u8, row_low, x) & 0b1;
         const pixel_high = std.math.shr(u8, row_high, x) & 0b1;
@@ -1088,6 +1098,8 @@ const Gpu = struct {
     //v-blank lines(10)
 
     pub fn step(self: *Gpu, cpuClocks: mcycles) GpuStepResult {
+        const zone = tracy.beginZone(@src(), .{ .name = "gpu step" });
+        defer zone.end();
         self.mode_clocks += cpuClocks;
         switch (self.mode) {
             0 => { //H-Blank
@@ -1234,6 +1246,7 @@ const Allocator = std.mem.Allocator;
 const c = @cImport({
     @cInclude("SDL2/SDL.h");
 });
+const tracy = @import("tracy");
 
 // This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
 const lib = @import("zig_hello_world_lib");
