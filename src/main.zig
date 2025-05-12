@@ -1102,8 +1102,8 @@ const SpriteData = struct {
         const row_high = self.pattern[y * 2];
         const row_low = self.pattern[y * 2 + 1];
 
-        const pixel_low = std.math.shr(u8, row_low, x) & 0b1;
-        const pixel_high = std.math.shr(u8, row_high, x) & 0b1;
+        const pixel_low = std.math.shr(u8, row_low, (7 - x)) & 0b1;
+        const pixel_high = std.math.shr(u8, row_high, (7 - x)) & 0b1;
         return @intCast((pixel_high << 1) | pixel_low);
     }
 };
@@ -1133,7 +1133,7 @@ const Gpu = struct {
         bg_and_window_tile_select: bool,
         window_display_enable: bool,
         window_tilemap_display_select: bool,
-        lcd_dissplay_enable: bool,
+        lcd_display_enable: bool,
     },
     background_palette: packed struct {
         color0: u2,
@@ -1183,12 +1183,6 @@ const Gpu = struct {
     const RESOLUTION_HEIGHT = 144;
     const TILEDEBUG_WIDTH = 16 * 8;
     const TILEDEBUG_HEIGHT = 24 * 8;
-    //OAM (20 clocks)
-    //Raster (43+ clocks)
-    //H-Blank (51- clocks)
-    //scanline total (114 clocks)
-    //non V-Blan lines (144)
-    //v-blank lines(10)
 
     pub fn step(self: *Gpu, cpuClocks: mcycles) GpuStepResult {
         const zone = tracy.beginZone(@src(), .{ .name = "gpu step" });
@@ -1252,17 +1246,27 @@ const Gpu = struct {
         }
     }
 
+    inline fn getBackgroundColor(self: *Gpu, color_index: u2) u8 {
+        switch (color_index) {
+            0 => return self.background_palette.color0,
+            1 => return self.background_palette.color1,
+            2 => return self.background_palette.color2,
+            3 => return self.background_palette.color3,
+        }
+    }
+
     fn drawscanline(self: *Gpu) void {
         const tile_width = 8;
         const tile_height = 8;
-        const shades = [_]u8{ 0, 63, 128, 255 };
+        const shades = [_]u8{ 0, 63, 128, 255 }; //this might need to be inverted
 
         const tile_data_vram = self.ram[0x8000..0x8FFF];
         const tile_data = sliceCast(SpriteData, tile_data_vram, 0, 0xFFF);
 
+        std.debug.assert(self.lcd_control.bg_and_window_tile_select == true);
+
         //Draw BG
-        const bg_map_1 = self.ram[0x9800..0x9BFF];
-        //const bg_map_2 = self.ram[0x9C00..0x9FFF];
+        const bg_map_1 = if (self.lcd_control.bg_tilemap_display_select == false) self.ram[0x9800..0x9BFF] else self.ram[0x9C00..0x9FFF];
         for (bg_map_1, 0..) |tile_index, i| {
             const tile_x = i % 32;
             const tile_y = i / 32;
@@ -1286,7 +1290,7 @@ const Gpu = struct {
                 const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + framebuffer_x;
                 if (framebuffer_index >= self.framebuffer.len)
                     break;
-                self.framebuffer[framebuffer_index] = shades[color_index];
+                self.framebuffer[framebuffer_index] = shades[self.getBackgroundColor(color_index)];
             }
         }
 
