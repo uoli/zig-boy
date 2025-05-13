@@ -153,6 +153,8 @@ const Emulator = struct {
 
         const boot_location = "F:\\Projects\\higan\\higan\\System\\Game Boy\\boot.dmg-1.rom";
         const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Pokemon Red (UE) [S][!].gb";
+        //const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Tetris (World) (Rev 1).gb";
+
         const buffer_size = 2 * 1024 * 1024;
 
         const boot_rom = try load_rom(boot_location, 256, std.heap.page_allocator);
@@ -168,6 +170,7 @@ const Emulator = struct {
         var gpu = Gpu.init(&bus, ram[0..ram.len]);
         var cpu = Cpu.init(boot_rom, &bus);
         bus.connectGpu(&gpu);
+        bus.connectCpu(&cpu);
 
         return Emulator{
             //.gpa = gpa,
@@ -288,7 +291,7 @@ const Cartridge = struct {
     bank_selected: u8,
     fn init(rom: []const u8) Cartridge {
         const cartridge_type = CartridgeTypeMap[rom[0x147]];
-        std.debug.assert(cartridge_type.? == CartridgeType.MBC3_RAM_BATTERY);
+        std.debug.assert(cartridge_type.? == CartridgeType.MBC3_RAM_BATTERY or cartridge_type.? == CartridgeType.ROM_ONLY);
         return Cartridge{
             .rom = rom,
             .cartridge_type = cartridge_type.?,
@@ -300,8 +303,8 @@ const Cartridge = struct {
         switch (address) {
             0x0000...0x3FFF => return self.rom[address],
             0x4000...0x7FFF => {
-                var addr_delta = address - 0x4000;
-                addr_delta += @as(u16, self.bank_selected) * 0x4000;
+                var addr_delta: usize = address - 0x4000;
+                addr_delta += @as(usize, self.bank_selected) * 0x4000;
                 return self.rom[addr_delta];
             },
             else => std.debug.panic("unhandled cartridge read address 0x{x}", .{address}),
@@ -323,6 +326,7 @@ const Bus = struct {
     ram: []u8,
     cartridge: *Cartridge,
     gpu: *Gpu = undefined,
+    cpu: *Cpu = undefined,
 
     pub fn init(ram: []u8, cartridge: *Cartridge) Bus {
         return Bus{
@@ -333,6 +337,14 @@ const Bus = struct {
 
     fn connectGpu(self: *Bus, gpu: *Gpu) void {
         self.gpu = gpu;
+    }
+
+    fn connectCpu(self: *Bus, cpu: *Cpu) void {
+        self.cpu = cpu;
+    }
+
+    fn raise_cpu_interrupt(self: *Bus, interrupt: Cpu.Interrup) void {
+        self.cpu.raise_interrupt(interrupt);
     }
 
     pub fn read(self: Bus, address: u16) u8 {
@@ -389,6 +401,9 @@ const Bus = struct {
             },
             0xFF40 => {
                 self.gpu.lcd_control = @bitCast(value);
+            },
+            0xFF41 => {
+                self.gpu.lcd_status = @bitCast(value);
             },
             0xFF42 => {
                 self.gpu.scroll_y = value;
@@ -596,6 +611,11 @@ fn rotate_left_a(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+fn load_d_to_b(cpu: *Cpu) !mcycles {
+    cpu.r.s.b = cpu.r.s.d;
+    return 1;
+}
+
 fn load_a_to_b(cpu: *Cpu) !mcycles {
     cpu.r.s.b = cpu.r.s.a;
     return 1;
@@ -606,8 +626,13 @@ fn load_a_to_c(cpu: *Cpu) !mcycles {
     return 1;
 }
 
-fn load_D_to_b(cpu: *Cpu) !mcycles {
-    cpu.r.s.b = cpu.r.s.d;
+fn load_b_to_d(cpu: *Cpu) !mcycles {
+    cpu.r.s.d = cpu.r.s.b;
+    return 1;
+}
+
+fn load_h_to_d(cpu: *Cpu) !mcycles {
+    cpu.r.s.d = cpu.r.s.h;
     return 1;
 }
 
@@ -616,9 +641,24 @@ fn load_a_to_d(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+fn load_a_to_e(cpu: *Cpu) !mcycles {
+    cpu.r.s.e = cpu.r.s.a;
+    return 1;
+}
+
 fn load_a_to_h(cpu: *Cpu) !mcycles {
     cpu.r.s.h = cpu.r.s.a;
     return 1;
+}
+
+fn load_e_to_l(cpu: *Cpu) !mcycles {
+    cpu.r.s.l = cpu.r.s.e;
+    return 1;
+}
+
+fn store_c_to_indirectHL(cpu: *Cpu) !mcycles {
+    cpu.store(cpu.r.f.HL, cpu.r.s.c);
+    return 2;
 }
 
 fn store_a_to_indirectHL(cpu: *Cpu) !mcycles {
@@ -651,6 +691,14 @@ fn load_l_to_a(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+fn add_a_to_e(cpu: *Cpu) !mcycles {
+    cpu.r.s.a, cpu.r.s.f.c = @addWithOverflow(cpu.r.s.a, cpu.r.s.e);
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) + (cpu.r.s.e & 0x0F) > 0xF) 1 else 0; //TODO: find simpler way?
+    return 1;
+}
+
 fn add_a_to_hl_indirect(cpu: *Cpu) !mcycles {
     const val = cpu.load(cpu.r.f.HL);
     cpu.r.s.a, cpu.r.s.f.c = @addWithOverflow(cpu.r.s.a, val);
@@ -659,6 +707,14 @@ fn add_a_to_hl_indirect(cpu: *Cpu) !mcycles {
     cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) + (val & 0x0F) > 0xF) 1 else 0; //TODO: find simpler way?
 
     return 2;
+}
+
+fn add_a_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a, cpu.r.s.f.c = @addWithOverflow(cpu.r.s.a, cpu.r.s.a);
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) + (cpu.r.s.a & 0x0F) > 0xF) 1 else 0; //TODO: find simpler way?
+    return 1;
 }
 
 fn subtract_l_from_a(cpu: *Cpu) !mcycles {
@@ -702,7 +758,7 @@ fn load_indirectHL_dec_to_a(cpu: *Cpu) !mcycles {
 }
 
 fn dec_a(cpu: *Cpu) !mcycles {
-    cpu.r.s.a -= 1;
+    cpu.r.s.a -%= 1;
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
     cpu.r.s.f.n = 1;
     cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) == 0x0F) 1 else 0;
@@ -749,6 +805,11 @@ fn store_a_to_indirect_c(cpu: *Cpu) !mcycles {
     return 2;
 }
 
+fn push_hl(cpu: *Cpu) !mcycles {
+    cpu.push16(cpu.r.f.HL);
+    return 4;
+}
+
 fn and_d8_to_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a &= cpu.fetch();
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
@@ -786,10 +847,28 @@ fn return_from_call(cpu: *Cpu) !mcycles {
     return 4;
 }
 
+fn jump_if_zero_a16(cpu: *Cpu) !mcycles {
+    const dest = cpu.fetch16();
+    var timing: mcycles = 3;
+    if (cpu.r.s.f.z == 1) {
+        cpu.pc = dest;
+        timing += 1;
+    }
+    return timing;
+}
+
 fn jmp_s8(cpu: *Cpu) !mcycles {
     const dest = cpu.fetch();
     cpu.pc = add_u8_as_signed_to_u16(dest, cpu.pc);
     return 3;
+}
+
+fn add_de_to_hl(cpu: *Cpu) !mcycles {
+    cpu.r.f.HL, cpu.r.s.f.c = @addWithOverflow(cpu.r.f.HL, cpu.r.f.DE);
+    cpu.r.s.f.z = if (cpu.r.f.HL == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = if ((cpu.r.f.HL & 0x0F) + (cpu.r.f.DE & 0x0F) > 0x0F) 1 else 0;
+    return 1;
 }
 
 fn load_indirectDE_to_a(cpu: *Cpu) !mcycles {
@@ -797,7 +876,7 @@ fn load_indirectDE_to_a(cpu: *Cpu) !mcycles {
     return 2;
 }
 fn dec_e(cpu: *Cpu) !mcycles {
-    cpu.r.s.e -= 1;
+    cpu.r.s.e -%= 1;
     cpu.r.s.f.z = if (cpu.r.s.e == 0) 1 else 0;
     cpu.r.s.f.n = 1;
     cpu.r.s.f.h = if ((cpu.r.s.e & 0x0F) == 0x0F) 1 else 0;
@@ -843,6 +922,11 @@ fn inc_H(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+fn load_d8_to_h(cpu: *Cpu) !mcycles {
+    cpu.r.s.h = cpu.fetch();
+    return 2;
+}
+
 fn jmp_if_zero(cpu: *Cpu) !mcycles {
     const dest = cpu.fetch();
     var timing: mcycles = 2;
@@ -853,9 +937,30 @@ fn jmp_if_zero(cpu: *Cpu) !mcycles {
     return timing;
 }
 
+fn load_HL_indirect_inc_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.load(cpu.r.f.HL);
+    cpu.r.f.HL += 1;
+    return 2;
+}
+
+fn load_bc_indirect_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.l = cpu.load(cpu.r.f.BC);
+    return 2;
+}
+
 fn load_d8_to_l(cpu: *Cpu) !mcycles {
     cpu.r.s.l = cpu.fetch();
     return 2;
+}
+
+fn jump_not_carry_s8(cpu: *Cpu) !mcycles {
+    const dest = cpu.fetch();
+    var timing: mcycles = 2;
+    if (cpu.r.s.f.c == 0) {
+        cpu.pc = add_u8_as_signed_to_u16(dest, cpu.pc);
+        timing += 1;
+    }
+    return timing;
 }
 
 fn call16(cpu: *Cpu) !mcycles {
@@ -882,6 +987,15 @@ fn compare_immediate8_ra(cpu: *Cpu) !mcycles {
     cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) < (immediate & 0x0F)) 1 else 0;
     cpu.r.s.f.c = if (cpu.r.s.a < immediate) 1 else 0;
     return 2;
+}
+
+fn and_a_with_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a &= cpu.r.s.a;
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 1;
+    cpu.r.s.f.c = 0;
+    return 1;
 }
 
 fn xor_a_with_a(cpu: *Cpu) !mcycles {
@@ -911,8 +1025,18 @@ fn compare_indirectHL_to_a(cpu: *Cpu) !mcycles {
     return 2;
 }
 
+fn push_af(cpu: *Cpu) !mcycles {
+    cpu.push16(cpu.r.f.AF);
+    return 4;
+}
+
 fn disable_interrupts(cpu: *Cpu) !mcycles {
     cpu.interrupt.enabled = false;
+    return 1;
+}
+
+fn enable_interrupts(cpu: *Cpu) !mcycles {
+    cpu.interrupt.enabled = true;
     return 1;
 }
 
@@ -1017,6 +1141,7 @@ const Cpu = struct {
         const opcodesInfo = [_]OpCodeInfo{
             OpCodeInfo.init(0x00, "NOP", NoArgs, &nop),
             OpCodeInfo.init(0x01, "LD BC, d16", Single16Arg, &load_d16_to_bc),
+            OpCodeInfo.init(0x02, "LD (BC), A", NoArgs, &load_bc_indirect_to_a),
             OpCodeInfo.init(0x04, "INC B", NoArgs, &inc_b),
             OpCodeInfo.init(0x05, "DEC B", NoArgs, &dec_b),
             OpCodeInfo.init(0x06, "LD B, d8", Single8Arg, &load_d8_to_b),
@@ -1030,6 +1155,7 @@ const Cpu = struct {
             OpCodeInfo.init(0x16, "LD D, d8", Single8Arg, &load_d8_to_d),
             OpCodeInfo.init(0x17, "RLA", NoArgs, &rotate_left_a),
             OpCodeInfo.init(0x18, "JR s8", Single8Arg, &jmp_s8),
+            OpCodeInfo.init(0x19, "ADD HL, DE", NoArgs, &add_de_to_hl),
             OpCodeInfo.init(0x1A, "LD A,(DE)", NoArgs, &load_indirectDE_to_a),
             OpCodeInfo.init(0x1D, "DEC E", NoArgs, &dec_e),
             OpCodeInfo.init(0x1E, "LD E, d8", Single8Arg, &load_d8_to_e),
@@ -1038,29 +1164,40 @@ const Cpu = struct {
             OpCodeInfo.init(0x22, "LD (HL+), A", NoArgs, &store_a_to_IndirectHL_inc),
             OpCodeInfo.init(0x23, "INC HL", NoArgs, &inc_HL),
             OpCodeInfo.init(0x24, "INC H", NoArgs, &inc_H),
+            OpCodeInfo.init(0x26, "LD H, d8", Single8Arg, &load_d8_to_h),
             OpCodeInfo.init(0x28, "JR Z", Single8Arg, &jmp_if_zero),
+            OpCodeInfo.init(0x2a, "LD A, (HL+)", NoArgs, &load_HL_indirect_inc_to_a),
             OpCodeInfo.init(0x2e, "LD L, d8", Single8Arg, &load_d8_to_l),
+            OpCodeInfo.init(0x30, "JR NC, s8", Single8Arg, &jump_not_carry_s8),
             OpCodeInfo.init(0x31, "LD SP, d16", Single16Arg, &load_d16_to_sp),
             OpCodeInfo.init(0x32, "LD (HL-), A", NoArgs, &store_a_to_indirectHL_dec),
             OpCodeInfo.init(0x36, "LD (HL), d8", Single8Arg, &store_d8_to_indirectHL),
             OpCodeInfo.init(0x3a, "LD A, (HL-)", Single8Arg, &load_indirectHL_dec_to_a),
             OpCodeInfo.init(0x3d, "DEC A", NoArgs, &dec_a),
             OpCodeInfo.init(0x3e, "LD A, d8", Single8Arg, &load_d8_to_a),
+            OpCodeInfo.init(0x42, "LD B, D", NoArgs, &load_d_to_b),
             OpCodeInfo.init(0x47, "LD B, A", NoArgs, &load_a_to_b),
             OpCodeInfo.init(0x4f, "LD C, A", NoArgs, &load_a_to_c),
-            OpCodeInfo.init(0x50, "LD D, B", NoArgs, &load_D_to_b),
+            OpCodeInfo.init(0x50, "LD D, B", NoArgs, &load_b_to_d),
+            OpCodeInfo.init(0x54, "LD D, H", NoArgs, &load_h_to_d),
             OpCodeInfo.init(0x57, "LD D, A", NoArgs, &load_a_to_d),
+            OpCodeInfo.init(0x5F, "LD E, A", NoArgs, &load_a_to_e),
             OpCodeInfo.init(0x67, "LD H, A", NoArgs, &load_a_to_h),
+            OpCodeInfo.init(0x6b, "LD L, E", NoArgs, &load_e_to_l),
+            OpCodeInfo.init(0x71, "LD (HL), C", NoArgs, &store_c_to_indirectHL),
             OpCodeInfo.init(0x77, "LD (HL), A", NoArgs, &store_a_to_indirectHL),
             OpCodeInfo.init(0x78, "LD A, B", NoArgs, &load_b_to_a),
             OpCodeInfo.init(0x7a, "LD A, D", NoArgs, &load_d_to_a),
             OpCodeInfo.init(0x7b, "LD A, E", NoArgs, &load_e_to_a),
             OpCodeInfo.init(0x7c, "LD A, H", NoArgs, &load_h_to_a),
             OpCodeInfo.init(0x7d, "LD A, L", NoArgs, &load_l_to_a),
+            OpCodeInfo.init(0x83, "ADD A, E", NoArgs, &add_a_to_e),
             OpCodeInfo.init(0x86, "ADD A, (HL)", NoArgs, &add_a_to_hl_indirect),
+            OpCodeInfo.init(0x87, "ADD A, A", NoArgs, &add_a_to_a),
             OpCodeInfo.init(0x90, "SUB B", NoArgs, &subtract_b_from_a),
             OpCodeInfo.init(0x95, "SUB L", NoArgs, &subtract_l_from_a),
             //OpCodeInfo.init(0x96, "SUB (HL)", NoArgs, &subtract_),
+            OpCodeInfo.init(0xA7, "AND A", NoArgs, &and_a_with_a),
             OpCodeInfo.init(0xAF, "XOR A", NoArgs, &xor_a_with_a),
             OpCodeInfo.init(0xB1, "OR C", NoArgs, &or_c_with_a),
             OpCodeInfo.init(0xBE, "CP (HL)", NoArgs, &compare_indirectHL_to_a),
@@ -1068,6 +1205,7 @@ const Cpu = struct {
             OpCodeInfo.init(0xC3, "JMP", Single16Arg, &jmp),
             OpCodeInfo.init(0xC5, "PUSH BC", NoArgs, &push_bc),
             OpCodeInfo.init(0xC9, "RET", NoArgs, &return_from_call),
+            OpCodeInfo.init(0xCA, "JP Z, a16", Single16Arg, &jump_if_zero_a16),
             //OpCodeInfo.init(0xCB, "Xtended", Single16Arg, &cb_extended),
             OpCodeInfo.init(0xCD, "CALL a16", Single16Arg, &call16),
             OpCodeInfo.init(0xD1, "POP DE", NoArgs, &pop_de),
@@ -1075,12 +1213,15 @@ const Cpu = struct {
             OpCodeInfo.init(0xE0, "LD (a8), A", Single8Arg, &load_a_to_indirect8),
             OpCodeInfo.init(0xE1, "POP HL", NoArgs, &pop_to_HL),
             OpCodeInfo.init(0xE2, "LD (C), A", NoArgs, &store_a_to_indirect_c),
+            OpCodeInfo.init(0xE5, "PUSH HL", Single8Arg, &push_hl),
             OpCodeInfo.init(0xE6, "AND d8", Single8Arg, &and_d8_to_a),
             OpCodeInfo.init(0xEA, "LD (a16), A", Single16Arg, &load_a_to_indirect16),
             OpCodeInfo.init(0xF0, "LD A, (a8)", Single8Arg, &load_indirect8_to_a),
             OpCodeInfo.init(0xF3, "DI", NoArgs, &disable_interrupts),
+            OpCodeInfo.init(0xF5, "PUSH AF", NoArgs, &push_af),
             OpCodeInfo.init(0xFE, "CP A,", Single8Arg, &compare_immediate8_ra),
             OpCodeInfo.init(0xFA, "LD A (a16)", Single16Arg, &load_indirect16_to_a),
+            OpCodeInfo.init(0xFb, "EI", NoArgs, &enable_interrupts),
         };
 
         const extended_opcodesInfo = [_]OpCodeInfo{
@@ -1181,22 +1322,20 @@ const Cpu = struct {
             0xFF07 => {
                 self.timer.control = @bitCast(value);
             },
-            0xFF11...0xFF25 => {
+            0xFF10...0xFF25 => {
                 //No-Impl Sound related I/O ops
             },
             0xFF26 => {
-                self.sound_flags.enabled = if (value & 0b1000_0000 == 0b1000_0000) 1 else 0;
+                self.sound_flags = @bitCast(value);
             },
             0xFF50 => {
                 self.disable_boot_rom = value;
             },
             0xFF0F => {
                 self.interrupt.interrupt_flag = @bitCast(value);
-                self.execute_interrupts_if_enabled();
             },
             0xFFFF => {
                 self.interrupt.interrupt_enabled = @bitCast(value);
-                self.execute_interrupts_if_enabled();
             },
             else => {
                 self.bus.write(address, value);
@@ -1231,7 +1370,8 @@ const Cpu = struct {
         return @as(u16, high) << 8 | low;
     }
 
-    fn decode_and_execute(self: *Cpu, instruction: u8) mcycles {
+    fn decode_and_execute(self: *Cpu) mcycles {
+        const instruction = self.fetch();
         if (instruction == 0xCB) {
             const extended_instruction = self.fetch();
             return self.extended_jmptable[extended_instruction](self) catch {
@@ -1255,33 +1395,55 @@ const Cpu = struct {
             if (self.enable_trace)
                 self.print_trace();
         }
-        const instruction = self.fetch();
-        return self.decode_and_execute(instruction);
+
+        var clocks = execute_interrupts_if_enabled(self);
+        clocks += self.decode_and_execute();
+
+        return clocks;
     }
 
-    fn execute_interrupt(comptime T: type) type {
-        return struct {
-            fn do(cpu: *Cpu, flag: T, address: u16) void {
-                if (flag.*) {
-                    std.debug.print("Interrupt 0x{x}", .{address});
-                    flag.* = false;
-                    cpu.interrupt.enabled = false;
-                    cpu.push16(cpu.pc);
-                    cpu.pc = address;
-                }
-            }
-        };
+    inline fn execute_interrupt(self: *Cpu, interrupt_address: u16) mcycles {
+        std.debug.print("Interrupt 0x{x}", .{interrupt_address});
+        self.interrupt.enabled = false;
+        self.push16(self.pc);
+        self.pc = interrupt_address;
+        return 3;
     }
 
-    fn execute_interrupts_if_enabled(self: *Cpu) void {
+    const Interrup = enum(u8) {
+        VBlank = 0b00000001,
+        LCDStat = 0b00000010,
+        Timer = 0b00000100,
+        Serial = 0b00001000,
+        Joypad = 0b00010000,
+    };
+
+    fn raise_interrupt(self: *Cpu, interrupt: Interrup) void {
+        const interrupt_bit_mask: u8 = @intFromEnum(interrupt);
+        const current_interrupts: u8 = @bitCast(self.interrupt.interrupt_flag);
+        const new_bitmask = interrupt_bit_mask | current_interrupts;
+        self.interrupt.interrupt_flag = @bitCast(new_bitmask);
+    }
+
+    fn execute_interrupts_if_enabled(self: *Cpu) mcycles {
         if (!self.interrupt.enabled) {
-            return;
+            return 0;
         }
-        execute_interrupt(*align(1:0:1) bool).do(self, &self.interrupt.interrupt_flag.vblank, 0x0040);
-        execute_interrupt(*align(1:1:1) bool).do(self, &self.interrupt.interrupt_flag.lcd_stat, 0x0048);
-        execute_interrupt(*align(1:2:1) bool).do(self, &self.interrupt.interrupt_flag.timer, 0x0050);
-        execute_interrupt(*align(1:3:1) bool).do(self, &self.interrupt.interrupt_flag.serial, 0x0058);
-        execute_interrupt(*align(1:4:1) bool).do(self, &self.interrupt.interrupt_flag.joypad, 0x0060);
+        const bitMaskToInterrupt = [_]struct { u8, u16 }{
+            .{ @intFromEnum(Interrup.VBlank), 0x0040 },
+            .{ @intFromEnum(Interrup.LCDStat), 0x0048 },
+            .{ @intFromEnum(Interrup.Timer), 0x0050 },
+            .{ @intFromEnum(Interrup.Serial), 0x0058 },
+            .{ @intFromEnum(Interrup.Joypad), 0x0060 },
+        };
+
+        for (bitMaskToInterrupt) |mask| {
+            const current_interrupts_bitfield: u8 = @bitCast(self.interrupt.interrupt_flag);
+            if (current_interrupts_bitfield & mask[0] != 0) {
+                return self.execute_interrupt(mask[1]);
+            }
+        }
+        return 0;
     }
 
     pub fn print_trace(self: *Cpu) void {
@@ -1360,10 +1522,20 @@ const Gpu = struct {
     bus: *Bus,
 
     ly: u8,
+    lyc: u8,
     scroll_x: u8,
     scroll_y: u8,
     window_x: u8,
     window_y: u8,
+    lcd_status: packed struct {
+        mode: u2,
+        coincidence: bool,
+        mode0_hblank_interrupt: bool,
+        mode_1_vblank_interrupt: bool,
+        mode2_oam_interrupt: bool,
+        coincidence_interrupt: bool,
+        _: u1,
+    },
     lcd_control: packed struct {
         bg_display: bool,
         obj_display_enable: bool,
@@ -1400,6 +1572,7 @@ const Gpu = struct {
             .mode = 2,
             .mode_clocks = 0,
             .ly = 0,
+            .lyc = 0,
             .visibleSprites = [_]SpriteAttribute{undefined} ** 10,
             .visibleSpritesCount = 0,
             .framebuffer = [_]u8{0} ** (RESOLUTION_WIDTH * RESOLUTION_HEIGHT),
@@ -1408,6 +1581,7 @@ const Gpu = struct {
             .scroll_y = 0,
             .window_x = 0,
             .window_y = 0,
+            .lcd_status = .{ .mode = 2, .coincidence = false, .mode0_hblank_interrupt = false, .mode_1_vblank_interrupt = false, .mode2_oam_interrupt = false, .coincidence_interrupt = false, ._ = undefined },
             .lcd_control = @bitCast(@as(u8, 0x91)),
             .background_palette = .{ .color0 = 0, .color1 = 0, .color2 = 0, .color3 = 0 },
             .object_palette = .{ .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 }, .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 } },
@@ -1427,15 +1601,15 @@ const Gpu = struct {
         const zone = tracy.beginZone(@src(), .{ .name = "gpu step" });
         defer zone.end();
         self.mode_clocks += cpuClocks;
-        switch (self.mode) {
+        switch (self.lcd_status.mode) {
             0 => { //H-Blank
                 if (self.mode_clocks >= HBLANK_CLOKS) {
                     self.mode_clocks %= HBLANK_CLOKS;
-                    if (self.ly < 144) {
-                        self.ly += 1;
-                        self.mode = 2;
-                    } else {
-                        self.mode = 1;
+                    self.ly += 1;
+
+                    self.lcd_status.mode = if (self.ly < 144) 2 else 1;
+                    check_lyc(self);
+                    if (self.lcd_status.mode == 1) {
                         return GpuStepResult.FrameReady;
                     }
                 }
@@ -1445,27 +1619,36 @@ const Gpu = struct {
                     self.mode_clocks %= VBLANK_LINE_CLOCKS;
                     self.ly += 1;
                     if (self.ly == 154) {
-                        self.mode = 2;
+                        self.lcd_status.mode = 2;
                         self.ly = 0;
                     }
+                    check_lyc(self);
                 }
             },
             2 => { //OAM
                 if (self.mode_clocks >= OAM_CLOCKS) {
                     self.mode_clocks %= OAM_CLOCKS;
-                    self.mode = 3;
+                    self.lcd_status.mode = 3;
                     self.findVisibleSprites();
                 }
             },
             3 => { //raster
                 if (self.mode_clocks >= RASTER_CLOKS) {
                     self.mode_clocks %= RASTER_CLOKS;
-                    self.mode = 0;
+                    self.lcd_status.mode = 0;
                     self.drawscanline();
                 }
             },
         }
         return GpuStepResult.Normal;
+    }
+
+    fn check_lyc(self: *Gpu) void {
+        if (self.ly == self.lyc) {
+            self.lcd_status.coincidence = true;
+            if (self.lcd_status.coincidence_interrupt)
+                self.bus.raise_cpu_interrupt(Cpu.Interrup.LCDStat);
+        }
     }
 
     fn findVisibleSprites(self: *Gpu) void {
