@@ -50,14 +50,11 @@ pub fn main() !void {
         }
     }
     const s =
+        \\const std = @import("std");
         \\const main = @import("main");
         \\const cpu_utils = main.cpu_utils;
         \\const OpCodeInfo = cpu_utils.OpCodeInfo;
         \\const ArgInfo = cpu_utils.ArgInfo;
-        \\
-        \\const NoArgs = [_]ArgInfo{{ .None, .None }};
-        \\const Single8Arg = [_]ArgInfo{{ .U8, .None }};
-        \\const Single16Arg = [_]ArgInfo{{ .U16, .None }};
         \\
     ;
     try std.fmt.format(output_file.writer(), s, .{});
@@ -68,8 +65,8 @@ pub fn main() !void {
 
 fn generate_opcode_func(writer: anytype, func_name: []const u8, opmetadata: std.ArrayList(struct { u16, []const u8 })) !void {
     const s =
-        \\pub fn {s}() []const OpCodeInfo {{
-        \\    const result = [_]OpCodeInfo {{
+        \\pub fn {s}() [256]OpCodeInfo {{
+        \\ var result: [256]OpCodeInfo = undefined;
         \\
     ;
     try std.fmt.format(writer, s, .{func_name});
@@ -85,13 +82,12 @@ fn generate_opcode_func(writer: anytype, func_name: []const u8, opmetadata: std.
         const a168Found = std.mem.indexOf(u8, mnemonic, "a16");
         const d168Found = std.mem.indexOf(u8, mnemonic, "d16");
 
-        const opargs = if (d8Found != null or a8Found != null or s8Found != null) "Single8Arg" else if (d168Found != null or a168Found != null) "Single16Arg" else "NoArgs";
+        const opargs = if (d8Found != null or a8Found != null or s8Found != null) ".U8" else if (d168Found != null or a168Found != null) ".U16" else ".None";
 
-        try std.fmt.format(writer, "OpCodeInfo.init(0x{x:02}, \"{s}\", {s}),\n", .{ opcode, mnemonic, opargs });
+        try std.fmt.format(writer, "result[0x{x:02}] = OpCodeInfo.init(0x{x:02}, \"{s}\", {s});\n", .{ opcode, opcode, mnemonic, opargs });
     }
     const s2 =
-        \\  }};
-        \\  return &result;
+        \\  return result;
         \\}}
         \\
     ;

@@ -1112,8 +1112,7 @@ const mcycles = usize;
 const opFunc = *const fn (*Cpu) anyerror!mcycles;
 
 fn process_opcodetable(table: []const OpCodeInfo, func_table: []const struct { u8, opFunc }) struct { [256]OpCodeInfo, [256]opFunc } {
-    const NoArgs = [_]ArgInfo{ .None, .None };
-    const err: OpCodeInfo = OpCodeInfo.init(0x00, "EXT ERR", NoArgs);
+    const err: OpCodeInfo = OpCodeInfo.init(0x00, "EXT ERR", .None);
     var opcodetable: [256]OpCodeInfo = undefined;
     var jmptable: [256]opFunc = undefined;
     for (0..255) |i| {
@@ -1282,8 +1281,8 @@ const Cpu = struct {
             .{ 0x87, &reset_a_bit0 },
         };
 
-        const opcodetable, const jmptable = process_opcodetable(opcodesInfo, &opcodesFunc);
-        const extended_opcodetable, const extended_jmptable = process_opcodetable(extended_opcodesInfo, &extended_opcodesFunc);
+        const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
+        const extended_opcodetable, const extended_jmptable = process_opcodetable(&extended_opcodesInfo, &extended_opcodesFunc);
 
         return Cpu{
             .boot_rom = boot_rom,
@@ -1450,8 +1449,8 @@ const Cpu = struct {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
         {
-            //const watched_pc = 0x100;
-            const watched_pc = 0xFFFF;
+            const watched_pc = 0x100;
+            //const watched_pc = 0xFFFF;
             if (self.pc == watched_pc)
                 self.enable_trace = true;
 
@@ -1524,22 +1523,20 @@ const Cpu = struct {
             self.extended_opcodetable[opcode]
         else
             self.opcodetable[opcode];
-        const args = opInfo.args;
-        var args_str: [10:0]u8 = undefined;
-        @memset(args_str[0..10], ' ');
+        const arg = opInfo.arg;
+        var args_str: [8:0]u8 = undefined;
+        @memset(args_str[0..], ' ');
 
-        for (args) |value| {
-            switch (value) {
-                .U8 => {
-                    _ = std.fmt.bufPrint(&args_str, " 0x{x:02}", .{self.load(tmp_ip)}) catch unreachable;
-                    tmp_ip += 1;
-                },
-                .U16 => {
-                    _ = std.fmt.bufPrint(&args_str, " 0x{x:04}", .{self.load16(tmp_ip)}) catch unreachable;
-                    tmp_ip += 2;
-                },
-                .None => {},
-            }
+        switch (arg) {
+            .U8 => {
+                _ = std.fmt.bufPrint(&args_str, " 0x{x:02}", .{self.load(tmp_ip)}) catch unreachable;
+                tmp_ip += 1;
+            },
+            .U16 => {
+                _ = std.fmt.bufPrint(&args_str, " 0x{x:04}", .{self.load16(tmp_ip)}) catch unreachable;
+                tmp_ip += 2;
+            },
+            .None => {},
         }
 
         std.debug.print("[CPU] 0x{x:04} 0x{x:02} {s: <12}{s} AF:0x{x:04} BC:0x{x:04} DE:0x{x:04} HL:0x{x:04} SP:0x{x:04} {s}\n", .{ self.pc, opInfo.code, opInfo.name, args_str, self.r.f.AF, self.r.f.BC, self.r.f.DE, self.r.f.HL, self.sp, self.r.debug_flag_str() });
