@@ -6,82 +6,40 @@ const opFunc = main.opFunc;
 pub fn nop(_: *Cpu) !mcycles {
     return 1;
 }
+
 pub fn NotImplemented(_: *Cpu) !mcycles {
     return error.NotImplemented;
 }
 
-pub fn load_d16_to_bc(cpu: *Cpu) !mcycles {
-    cpu.r.f.BC = cpu.fetch16();
-    return 3;
-}
-
-pub fn inc_b(cpu: *Cpu) !mcycles {
-    cpu.r.s.b +%= 1;
-    cpu.r.s.f.z = if (cpu.r.s.b == 0) 1 else 0;
-    cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = if ((cpu.r.s.b & 0xFF) == 0) 1 else 0;
-    return 1;
-}
-
-pub fn dec_b(cpu: *Cpu) !mcycles {
-    cpu.r.s.b -%= 1;
-    cpu.r.s.f.z = if (cpu.r.s.b == 0) 1 else 0;
+fn dec_8(cpu: *Cpu, reg: *u8) !mcycles {
+    reg.* -%= 1;
+    cpu.r.s.f.z = if (reg.* == 0) 1 else 0;
     cpu.r.s.f.n = 1;
     cpu.r.s.f.h = if ((cpu.r.s.b & 0b1000_0000) == 1) 1 else 0;
     return 1;
 }
 
-pub fn dec_bc(cpu: *Cpu) !mcycles {
-    cpu.r.f.BC -%= 1;
-    cpu.r.s.f.z = if (cpu.r.f.BC == 0) 1 else 0;
+fn dec_16(cpu: *Cpu, reg: *u16) !mcycles {
+    reg.* -%= 1;
+    cpu.r.s.f.z = if (reg.* == 0) 1 else 0;
     cpu.r.s.f.n = 1;
-    cpu.r.s.f.h = if ((cpu.r.f.BC & 0x0f) == 0x0f) 1 else 0;
+    cpu.r.s.f.h = if ((reg.* & 0x0f) == 0x0f) 1 else 0;
     return 1;
 }
 
-pub fn load_d8_to_b(cpu: *Cpu) !mcycles {
-    cpu.r.s.b = cpu.fetch();
-    return 2;
-}
-
-pub fn inc_c(cpu: *Cpu) !mcycles {
-    cpu.r.s.c +%= 1;
-    cpu.r.s.f.z = if (cpu.r.s.c == 1) 1 else 0;
+fn inc_8(cpu: *Cpu, reg: *u8) !mcycles {
+    reg.* +%= 1;
+    cpu.r.s.f.z = if (reg.* == 0) 1 else 0;
     cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = if ((cpu.r.s.c & 0x0F) == 0) 1 else 0;
+    cpu.r.s.f.h = if ((reg.* & 0xFF) == 0) 1 else 0; //verify this
     return 1;
 }
 
-pub fn dec_c(cpu: *Cpu) !mcycles {
-    cpu.r.s.c -%= 1;
-    cpu.r.s.f.z = if (cpu.r.s.c == 0) 1 else 0;
-    cpu.r.s.f.n = 1;
-    cpu.r.s.f.h = if ((cpu.r.s.c & 0b1000_0000) == 1) 1 else 0;
-    return 1;
-}
-
-pub fn load_d8_to_c(cpu: *Cpu) !mcycles {
-    cpu.r.s.c = cpu.fetch();
-    return 2;
-}
-
-pub fn load_d16_to_de(cpu: *Cpu) !mcycles {
-    cpu.r.f.DE = cpu.fetch16();
-    return 3;
-}
-
-pub fn inc_de(cpu: *Cpu) !mcycles {
-    cpu.r.f.DE +%= 1;
-    return 2;
-}
-
-pub fn dec_d(cpu: *Cpu) !mcycles {
-    cpu.r.s.d -%= 1;
-    return 1;
-}
-
-pub fn load_d8_to_d(cpu: *Cpu) !mcycles {
-    cpu.r.s.d = cpu.fetch();
+fn inc_u16(cpu: *Cpu, reg: *u16) !mcycles {
+    reg.* +%= 1;
+    cpu.r.s.f.z = if (reg.* == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = if ((reg.* & 0xFF) == 0) 1 else 0; //verify this
     return 2;
 }
 
@@ -107,6 +65,65 @@ pub fn rotate_r(cpu: *Cpu, data: *u8) void {
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 0;
     cpu.r.s.f.c = carry;
+}
+
+pub fn load_d16_to_bc(cpu: *Cpu) !mcycles {
+    cpu.r.f.BC = cpu.fetch16();
+    return 3;
+}
+
+pub fn inc_b(cpu: *Cpu) !mcycles {
+    return inc_8(cpu, &cpu.r.s.b);
+}
+
+pub fn dec_b(cpu: *Cpu) !mcycles {
+    return dec_8(cpu, &cpu.r.s.b);
+}
+
+pub fn dec_bc(cpu: *Cpu) !mcycles {
+    return dec_16(cpu, &cpu.r.f.BC);
+}
+
+pub fn load_d8_to_b(cpu: *Cpu) !mcycles {
+    cpu.r.s.b = cpu.fetch();
+    return 2;
+}
+
+pub fn inc_c(cpu: *Cpu) !mcycles {
+    return inc_8(cpu, &cpu.r.s.c);
+}
+
+pub fn dec_c(cpu: *Cpu) !mcycles {
+    return dec_8(cpu, &cpu.r.s.c);
+}
+
+pub fn load_d8_to_c(cpu: *Cpu) !mcycles {
+    cpu.r.s.c = cpu.fetch();
+    return 2;
+}
+
+pub fn dec_de(cpu: *Cpu) !mcycles {
+    return dec_16(cpu, &cpu.r.f.DE);
+}
+
+pub fn load_d16_to_de(cpu: *Cpu) !mcycles {
+    cpu.r.f.DE = cpu.fetch16();
+    return 3;
+}
+
+pub fn inc_de(cpu: *Cpu) !mcycles {
+    cpu.r.f.DE +%= 1;
+    return 2;
+}
+
+pub fn dec_d(cpu: *Cpu) !mcycles {
+    cpu.r.s.d -%= 1;
+    return 1;
+}
+
+pub fn load_d8_to_d(cpu: *Cpu) !mcycles {
+    cpu.r.s.d = cpu.fetch();
+    return 2;
 }
 
 pub fn rotate_left_a(cpu: *Cpu) !mcycles {
@@ -277,11 +294,7 @@ pub fn load_indirectHL_dec_to_a(cpu: *Cpu) !mcycles {
 }
 
 pub fn dec_a(cpu: *Cpu) !mcycles {
-    cpu.r.s.a -%= 1;
-    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
-    cpu.r.s.f.n = 1;
-    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) == 0x0F) 1 else 0;
-    return 1;
+    return dec_8(cpu, &cpu.r.s.a);
 }
 
 pub fn load_d8_to_a(cpu: *Cpu) !mcycles {
@@ -407,11 +420,7 @@ pub fn load_indirectDE_to_a(cpu: *Cpu) !mcycles {
     return 2;
 }
 pub fn dec_e(cpu: *Cpu) !mcycles {
-    cpu.r.s.e -%= 1;
-    cpu.r.s.f.z = if (cpu.r.s.e == 0) 1 else 0;
-    cpu.r.s.f.n = 1;
-    cpu.r.s.f.h = if ((cpu.r.s.e & 0x0F) == 0x0F) 1 else 0;
-    return 1;
+    return dec_8(cpu, &cpu.r.s.e);
 }
 
 pub fn load_d8_to_e(cpu: *Cpu) !mcycles {
@@ -441,16 +450,11 @@ pub fn store_a_to_IndirectHL_inc(cpu: *Cpu) !mcycles {
 }
 
 pub fn inc_HL(cpu: *Cpu) !mcycles {
-    cpu.r.f.HL += 1;
-    return 2;
+    return inc_u16(cpu, &cpu.r.f.HL);
 }
 
 pub fn inc_H(cpu: *Cpu) !mcycles {
-    cpu.r.s.h += 1;
-    cpu.r.s.f.z = if (cpu.r.s.h == 0) 1 else 0;
-    cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = if ((cpu.r.s.h & 0x0F) == 0) 1 else 0;
-    return 1;
+    return inc_8(cpu, &cpu.r.s.h);
 }
 
 pub fn load_d8_to_h(cpu: *Cpu) !mcycles {

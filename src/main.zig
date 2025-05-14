@@ -586,6 +586,7 @@ pub const Cpu = struct {
             .{ 0x0c, &cf.inc_c },
             .{ 0x0d, &cf.dec_c },
             .{ 0x0e, &cf.load_d8_to_c },
+            .{ 0x1b, &cf.dec_de },
             .{ 0x11, &cf.load_d16_to_de },
             .{ 0x13, &cf.inc_de },
             .{ 0x15, &cf.dec_d },
