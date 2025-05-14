@@ -593,7 +593,7 @@ fn load_d8_to_d(cpu: *Cpu) !mcycles {
     return 2;
 }
 
-fn rotate(cpu: *Cpu, data: *u8) void {
+fn rotate_l(cpu: *Cpu, data: *u8) void {
     const carry: u1 = if (data.* & 0b1000_0000 != 0) 1 else 0;
     const shifted = (data.* << 1);
     const around = @as(u8, cpu.r.s.f.c);
@@ -605,8 +605,20 @@ fn rotate(cpu: *Cpu, data: *u8) void {
     cpu.r.s.f.c = carry;
 }
 
+fn rotate_r(cpu: *Cpu, data: *u8) void {
+    const carry: u1 = if (data.* & 0b0000_0001 != 0) 1 else 0;
+    const shifted = (data.* >> 1);
+    const around = @as(u8, cpu.r.s.f.c);
+    data.* = around << 7 | shifted;
+
+    cpu.r.s.f.z = if (data.* == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 0;
+    cpu.r.s.f.c = carry;
+}
+
 fn rotate_left_a(cpu: *Cpu) !mcycles {
-    rotate(cpu, &cpu.r.s.a);
+    rotate_l(cpu, &cpu.r.s.a);
     cpu.r.s.f.z = 0;
     return 1;
 }
@@ -641,6 +653,11 @@ fn load_a_to_d(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+fn load_l_to_e(cpu: *Cpu) !mcycles {
+    cpu.r.s.e = cpu.r.s.l;
+    return 1;
+}
+
 fn load_a_to_e(cpu: *Cpu) !mcycles {
     cpu.r.s.e = cpu.r.s.a;
     return 1;
@@ -653,6 +670,11 @@ fn load_a_to_h(cpu: *Cpu) !mcycles {
 
 fn load_e_to_l(cpu: *Cpu) !mcycles {
     cpu.r.s.l = cpu.r.s.e;
+    return 1;
+}
+
+fn load_a_to_l(cpu: *Cpu) !mcycles {
+    cpu.r.s.l = cpu.r.s.a;
     return 1;
 }
 
@@ -689,6 +711,11 @@ fn load_h_to_a(cpu: *Cpu) !mcycles {
 fn load_l_to_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a = cpu.r.s.l;
     return 1;
+}
+
+fn load_hl_indirect_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.load(cpu.r.f.HL);
+    return 2;
 }
 
 fn add_a_to_e(cpu: *Cpu) !mcycles {
@@ -819,6 +846,11 @@ fn and_d8_to_a(cpu: *Cpu) !mcycles {
     return 2;
 }
 
+fn jmp_hl(cpu: *Cpu) !mcycles {
+    cpu.pc = cpu.r.f.HL;
+    return 1;
+}
+
 fn add_u8_as_signed_to_u16(dest: u8, pc: u16) u16 {
     const signed_dest: i16 = @intCast(@as(i8, @bitCast(dest)));
     const pc_signed: i16 = @intCast(pc);
@@ -840,6 +872,13 @@ fn jmp(cpu: *Cpu) !mcycles {
 fn push_bc(cpu: *Cpu) !mcycles {
     cpu.push16(cpu.r.f.BC);
     return 4;
+}
+
+fn return_from_call_condiional_on_z(cpu: *Cpu) !mcycles {
+    if (cpu.r.s.f.z == 1) {
+        return return_from_call(cpu);
+    }
+    return 2;
 }
 
 fn return_from_call(cpu: *Cpu) !mcycles {
@@ -1041,7 +1080,12 @@ fn enable_interrupts(cpu: *Cpu) !mcycles {
 }
 
 fn rotate_left_c(cpu: *Cpu) !mcycles {
-    rotate(cpu, &cpu.r.s.c);
+    rotate_l(cpu, &cpu.r.s.c);
+    return 2;
+}
+
+fn rotate_right_d(cpu: *Cpu) !mcycles {
+    rotate_r(cpu, &cpu.r.s.d);
     return 2;
 }
 
@@ -1051,6 +1095,13 @@ fn shift_left_B(cpu: *Cpu) !mcycles {
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 0;
     cpu.r.s.f.c = if ((cpu.r.s.b >> 7) == 1) 1 else 0;
+    return 2;
+}
+
+fn copy_compl_bit0_to_d(cpu: *Cpu) !mcycles {
+    cpu.r.s.f.z = if ((cpu.r.s.b >> 0) & 0b1 != 1) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 1;
     return 2;
 }
 
@@ -1266,6 +1317,15 @@ const Cpu = struct {
                 },
             },
             .timer = .{ .modulo = 0, .control = .{ .clock_select = 0, .timer_stop = false, ._ = undefined } },
+            .joypad = .{
+                .P10_Right_or_A = 0,
+                .P11_Left_or_B = 0,
+                .P12_Up_or_Select = 0,
+                .P13_Down_or_Start = 0,
+                .P14_Select_Direction = 0,
+                .P15_Select_Button = 0,
+                ._ = 0,
+            },
             .sound_flags = .{
                 .sound_1_enabled = 0,
                 .sound_2_enabled = 0,
@@ -1309,6 +1369,9 @@ const Cpu = struct {
 
     fn store(self: *Cpu, address: u16, value: u8) void {
         switch (address) {
+            0xFF00 => {
+                self.joypad = @bitCast(value);
+            },
             0xFF01 => {
                 self.serial_data_transfer.data = value;
             },
