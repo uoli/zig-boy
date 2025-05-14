@@ -16,6 +16,17 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const tool = b.addExecutable(.{
+        .name = "generate_opcode_trace_data",
+        .root_source_file = b.path("tools/generate_opcode_trace_data.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const run_tool_step = b.addRunArtifact(tool);
+    run_tool_step.addFileArg(b.path("tools\\instructions-data.json"));
+    const gen_output = run_tool_step.addOutputFileArg("gen.zig");
+
     // This creates a "module", which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
     // Every executable or library we compile will be based on one or more modules.
@@ -38,6 +49,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+    });
+
+    exe_mod.addAnonymousImport("gen", .{
+        .root_source_file = gen_output,
     });
 
     const sdl_dep = b.dependency("SDL", .{

@@ -11,7 +11,6 @@ fn load_rom(abs_rom_location: []const u8, max_bytes: usize, allocator: Allocator
 
     return cartridge_rom;
 }
-
 pub fn main() !void {
     tracy.setThreadName("Main");
     defer tracy.message("Graceful main thread exit");
@@ -490,23 +489,6 @@ const Registers = packed union {
         buf[2] = if (self.s.f.h == 1) 'H' else 'h';
         buf[3] = if (self.s.f.c == 1) 'C' else 'c';
         return buf;
-    }
-};
-
-const ArgInfo = enum { None, U8, U16 };
-
-const OpCodeInfo = struct {
-    name: []const u8,
-    code: u8,
-    args: [2]ArgInfo,
-    f: opFunc,
-    pub fn init(code: u8, name: []const u8, args: [2]ArgInfo, f: opFunc) OpCodeInfo {
-        return OpCodeInfo{
-            .name = name,
-            .code = code,
-            .args = args,
-            .f = f,
-        };
     }
 };
 
@@ -1129,19 +1111,22 @@ const Interrupts = packed struct {
 const mcycles = usize;
 const opFunc = *const fn (*Cpu) anyerror!mcycles;
 
-fn process_opcodetable(table: []const OpCodeInfo) struct { [256]OpCodeInfo, [256]opFunc } {
+fn process_opcodetable(table: []const OpCodeInfo, func_table: []const struct { u8, opFunc }) struct { [256]OpCodeInfo, [256]opFunc } {
     const NoArgs = [_]ArgInfo{ .None, .None };
-    const err: OpCodeInfo = OpCodeInfo.init(0x00, "EXT ERR", NoArgs, &NotImplemented);
+    const err: OpCodeInfo = OpCodeInfo.init(0x00, "EXT ERR", NoArgs);
     var opcodetable: [256]OpCodeInfo = undefined;
     var jmptable: [256]opFunc = undefined;
     for (0..255) |i| {
         opcodetable[i] = err;
-        jmptable[i] = err.f;
+        jmptable[i] = &NotImplemented;
     }
 
     for (table) |value| {
         opcodetable[value.code] = value;
-        jmptable[value.code] = value.f;
+    }
+
+    for (func_table) |value| {
+        jmptable[value[0]] = value[1];
     }
 
     return .{ opcodetable, jmptable };
@@ -1161,6 +1146,15 @@ const Cpu = struct {
         timer_stop: bool,
         _: u5,
     } },
+    joypad: packed struct {
+        P10_Right_or_A: u1,
+        P11_Left_or_B: u1,
+        P12_Up_or_Select: u1,
+        P13_Down_or_Start: u1,
+        P14_Select_Direction: u1,
+        P15_Select_Button: u1,
+        _: u2,
+    },
     sound_flags: packed struct {
         sound_1_enabled: u1,
         sound_2_enabled: u1,
@@ -1190,100 +1184,206 @@ const Cpu = struct {
         const Single16Arg = [_]ArgInfo{ .U16, .None };
 
         const opcodesInfo = [_]OpCodeInfo{
-            OpCodeInfo.init(0x00, "NOP", NoArgs, &nop),
-            OpCodeInfo.init(0x01, "LD BC, d16", Single16Arg, &load_d16_to_bc),
-            OpCodeInfo.init(0x02, "LD (BC), A", NoArgs, &load_bc_indirect_to_a),
-            OpCodeInfo.init(0x04, "INC B", NoArgs, &inc_b),
-            OpCodeInfo.init(0x05, "DEC B", NoArgs, &dec_b),
-            OpCodeInfo.init(0x06, "LD B, d8", Single8Arg, &load_d8_to_b),
-            OpCodeInfo.init(0x0b, "DEC BC", NoArgs, &dec_bc),
-            OpCodeInfo.init(0x0c, "INC C", NoArgs, &inc_c),
-            OpCodeInfo.init(0x0d, "DEC C", NoArgs, &dec_c),
-            OpCodeInfo.init(0x0e, "LD C, d8", NoArgs, &load_d8_to_c),
-            OpCodeInfo.init(0x11, "LD DE, d16", Single16Arg, &load_d16_to_de),
-            OpCodeInfo.init(0x13, "INC DE", NoArgs, &inc_de),
-            OpCodeInfo.init(0x15, "DEC D", NoArgs, &dec_d),
-            OpCodeInfo.init(0x16, "LD D, d8", Single8Arg, &load_d8_to_d),
-            OpCodeInfo.init(0x17, "RLA", NoArgs, &rotate_left_a),
-            OpCodeInfo.init(0x18, "JR s8", Single8Arg, &jmp_s8),
-            OpCodeInfo.init(0x19, "ADD HL, DE", NoArgs, &add_de_to_hl),
-            OpCodeInfo.init(0x1A, "LD A,(DE)", NoArgs, &load_indirectDE_to_a),
-            OpCodeInfo.init(0x1D, "DEC E", NoArgs, &dec_e),
-            OpCodeInfo.init(0x1E, "LD E, d8", Single8Arg, &load_d8_to_e),
-            OpCodeInfo.init(0x20, "JR NZ, s8", Single8Arg, &jmp_nz_s8),
-            OpCodeInfo.init(0x21, "LD HL, d16", Single16Arg, &load_d16_to_HL),
-            OpCodeInfo.init(0x22, "LD (HL+), A", NoArgs, &store_a_to_IndirectHL_inc),
-            OpCodeInfo.init(0x23, "INC HL", NoArgs, &inc_HL),
-            OpCodeInfo.init(0x24, "INC H", NoArgs, &inc_H),
-            OpCodeInfo.init(0x26, "LD H, d8", Single8Arg, &load_d8_to_h),
-            OpCodeInfo.init(0x28, "JR Z", Single8Arg, &jmp_if_zero),
-            OpCodeInfo.init(0x2a, "LD A, (HL+)", NoArgs, &load_HL_indirect_inc_to_a),
-            OpCodeInfo.init(0x2e, "LD L, d8", Single8Arg, &load_d8_to_l),
-            OpCodeInfo.init(0x30, "JR NC, s8", Single8Arg, &jump_not_carry_s8),
-            OpCodeInfo.init(0x31, "LD SP, d16", Single16Arg, &load_d16_to_sp),
-            OpCodeInfo.init(0x32, "LD (HL-), A", NoArgs, &store_a_to_indirectHL_dec),
-            OpCodeInfo.init(0x36, "LD (HL), d8", Single8Arg, &store_d8_to_indirectHL),
-            OpCodeInfo.init(0x3a, "LD A, (HL-)", Single8Arg, &load_indirectHL_dec_to_a),
-            OpCodeInfo.init(0x3d, "DEC A", NoArgs, &dec_a),
-            OpCodeInfo.init(0x3e, "LD A, d8", Single8Arg, &load_d8_to_a),
-            OpCodeInfo.init(0x42, "LD B, D", NoArgs, &load_d_to_b),
-            OpCodeInfo.init(0x47, "LD B, A", NoArgs, &load_a_to_b),
-            OpCodeInfo.init(0x4f, "LD C, A", NoArgs, &load_a_to_c),
-            OpCodeInfo.init(0x50, "LD D, B", NoArgs, &load_b_to_d),
-            OpCodeInfo.init(0x54, "LD D, H", NoArgs, &load_h_to_d),
-            OpCodeInfo.init(0x57, "LD D, A", NoArgs, &load_a_to_d),
-            OpCodeInfo.init(0x5F, "LD E, A", NoArgs, &load_a_to_e),
-            OpCodeInfo.init(0x67, "LD H, A", NoArgs, &load_a_to_h),
-            OpCodeInfo.init(0x6b, "LD L, E", NoArgs, &load_e_to_l),
-            OpCodeInfo.init(0x71, "LD (HL), C", NoArgs, &store_c_to_indirectHL),
-            OpCodeInfo.init(0x77, "LD (HL), A", NoArgs, &store_a_to_indirectHL),
-            OpCodeInfo.init(0x78, "LD A, B", NoArgs, &load_b_to_a),
-            OpCodeInfo.init(0x7a, "LD A, D", NoArgs, &load_d_to_a),
-            OpCodeInfo.init(0x7b, "LD A, E", NoArgs, &load_e_to_a),
-            OpCodeInfo.init(0x7c, "LD A, H", NoArgs, &load_h_to_a),
-            OpCodeInfo.init(0x7d, "LD A, L", NoArgs, &load_l_to_a),
-            OpCodeInfo.init(0x83, "ADD A, E", NoArgs, &add_a_to_e),
-            OpCodeInfo.init(0x86, "ADD A, (HL)", NoArgs, &add_a_to_hl_indirect),
-            OpCodeInfo.init(0x87, "ADD A, A", NoArgs, &add_a_to_a),
-            OpCodeInfo.init(0x90, "SUB B", NoArgs, &subtract_b_from_a),
-            OpCodeInfo.init(0x95, "SUB L", NoArgs, &subtract_l_from_a),
-            //OpCodeInfo.init(0x96, "SUB (HL)", NoArgs, &subtract_),
-            OpCodeInfo.init(0xA7, "AND A", NoArgs, &and_a_with_a),
-            OpCodeInfo.init(0xAF, "XOR A", NoArgs, &xor_a_with_a),
-            OpCodeInfo.init(0xB1, "OR C", NoArgs, &or_c_with_a),
-            OpCodeInfo.init(0xBE, "CP (HL)", NoArgs, &compare_indirectHL_to_a),
-            OpCodeInfo.init(0xC1, "POP BC", NoArgs, &pop_bc),
-            OpCodeInfo.init(0xC3, "JMP", Single16Arg, &jmp),
-            OpCodeInfo.init(0xC5, "PUSH BC", NoArgs, &push_bc),
-            OpCodeInfo.init(0xC9, "RET", NoArgs, &return_from_call),
-            OpCodeInfo.init(0xCA, "JP Z, a16", Single16Arg, &jump_if_zero_a16),
-            //OpCodeInfo.init(0xCB, "Xtended", Single16Arg, &cb_extended),
-            OpCodeInfo.init(0xCD, "CALL a16", Single16Arg, &call16),
-            OpCodeInfo.init(0xD1, "POP DE", NoArgs, &pop_de),
-            OpCodeInfo.init(0xD5, "PUSH DE", NoArgs, &push_de),
-            OpCodeInfo.init(0xE0, "LD (a8), A", Single8Arg, &load_a_to_indirect8),
-            OpCodeInfo.init(0xE1, "POP HL", NoArgs, &pop_to_HL),
-            OpCodeInfo.init(0xE2, "LD (C), A", NoArgs, &store_a_to_indirect_c),
-            OpCodeInfo.init(0xE5, "PUSH HL", Single8Arg, &push_hl),
-            OpCodeInfo.init(0xE6, "AND d8", Single8Arg, &and_d8_to_a),
-            OpCodeInfo.init(0xEA, "LD (a16), A", Single16Arg, &load_a_to_indirect16),
-            OpCodeInfo.init(0xF0, "LD A, (a8)", Single8Arg, &load_indirect8_to_a),
-            OpCodeInfo.init(0xF3, "DI", NoArgs, &disable_interrupts),
-            OpCodeInfo.init(0xF5, "PUSH AF", NoArgs, &push_af),
-            OpCodeInfo.init(0xFE, "CP A,", Single8Arg, &compare_immediate8_ra),
-            OpCodeInfo.init(0xFA, "LD A (a16)", Single16Arg, &load_indirect16_to_a),
-            OpCodeInfo.init(0xFb, "EI", NoArgs, &enable_interrupts),
+            OpCodeInfo.init(0x00, "NOP", NoArgs),
+            OpCodeInfo.init(0x01, "LD BC, d16", Single16Arg),
+            OpCodeInfo.init(0x02, "LD (BC), A", NoArgs),
+            OpCodeInfo.init(0x04, "INC B", NoArgs),
+            OpCodeInfo.init(0x05, "DEC B", NoArgs),
+            OpCodeInfo.init(0x06, "LD B, d8", Single8Arg),
+            OpCodeInfo.init(0x0b, "DEC BC", NoArgs),
+            OpCodeInfo.init(0x0c, "INC C", NoArgs),
+            OpCodeInfo.init(0x0d, "DEC C", NoArgs),
+            OpCodeInfo.init(0x0e, "LD C, d8", NoArgs),
+            OpCodeInfo.init(0x11, "LD DE, d16", Single16Arg),
+            OpCodeInfo.init(0x13, "INC DE", NoArgs),
+            OpCodeInfo.init(0x15, "DEC D", NoArgs),
+            OpCodeInfo.init(0x16, "LD D, d8", Single8Arg),
+            OpCodeInfo.init(0x17, "RLA", NoArgs),
+            OpCodeInfo.init(0x18, "JR s8", Single8Arg),
+            OpCodeInfo.init(0x19, "ADD HL, DE", NoArgs),
+            OpCodeInfo.init(0x1A, "LD A,(DE)", NoArgs),
+            OpCodeInfo.init(0x1D, "DEC E", NoArgs),
+            OpCodeInfo.init(0x1E, "LD E, d8", Single8Arg),
+            OpCodeInfo.init(0x20, "JR NZ, s8", Single8Arg),
+            OpCodeInfo.init(0x21, "LD HL, d16", Single16Arg),
+            OpCodeInfo.init(0x22, "LD (HL+), A", NoArgs),
+            OpCodeInfo.init(0x23, "INC HL", NoArgs),
+            OpCodeInfo.init(0x24, "INC H", NoArgs),
+            OpCodeInfo.init(0x26, "LD H, d8", Single8Arg),
+            OpCodeInfo.init(0x28, "JR Z", Single8Arg),
+            OpCodeInfo.init(0x2a, "LD A, (HL+)", NoArgs),
+            OpCodeInfo.init(0x2e, "LD L, d8", Single8Arg),
+            OpCodeInfo.init(0x30, "JR NC, s8", Single8Arg),
+            OpCodeInfo.init(0x31, "LD SP, d16", Single16Arg),
+            OpCodeInfo.init(0x32, "LD (HL-), A", NoArgs),
+            OpCodeInfo.init(0x36, "LD (HL), d8", Single8Arg),
+            OpCodeInfo.init(0x3a, "LD A, (HL-)", Single8Arg),
+            OpCodeInfo.init(0x3d, "DEC A", NoArgs),
+            OpCodeInfo.init(0x3e, "LD A, d8", Single8Arg),
+            OpCodeInfo.init(0x42, "LD B, D", NoArgs),
+            OpCodeInfo.init(0x47, "LD B, A", NoArgs),
+            OpCodeInfo.init(0x4f, "LD C, A", NoArgs),
+            OpCodeInfo.init(0x50, "LD D, B", NoArgs),
+            OpCodeInfo.init(0x54, "LD D, H", NoArgs),
+            OpCodeInfo.init(0x57, "LD D, A", NoArgs),
+            OpCodeInfo.init(0x5D, "LD E, L", NoArgs),
+            OpCodeInfo.init(0x5F, "LD E, A", NoArgs),
+            OpCodeInfo.init(0x67, "LD H, A", NoArgs),
+            OpCodeInfo.init(0x6b, "LD L, E", NoArgs),
+            OpCodeInfo.init(0x6f, "LD L, A", NoArgs),
+            OpCodeInfo.init(0x71, "LD (HL), C", NoArgs),
+            OpCodeInfo.init(0x77, "LD (HL), A", NoArgs),
+            OpCodeInfo.init(0x78, "LD A, B", NoArgs),
+            OpCodeInfo.init(0x7a, "LD A, D", NoArgs),
+            OpCodeInfo.init(0x7b, "LD A, E", NoArgs),
+            OpCodeInfo.init(0x7c, "LD A, H", NoArgs),
+            OpCodeInfo.init(0x7d, "LD A, L", NoArgs),
+            OpCodeInfo.init(0x7e, "LD A, (HL)", NoArgs),
+            OpCodeInfo.init(0x83, "ADD A, E", NoArgs),
+            OpCodeInfo.init(0x86, "ADD A, (HL)", NoArgs),
+            OpCodeInfo.init(0x87, "ADD A, A", NoArgs),
+            OpCodeInfo.init(0x90, "SUB B", NoArgs),
+            OpCodeInfo.init(0x95, "SUB L", NoArgs),
+            //OpCodeInfo.init(0x96, "SUB (HL)", NoArgs),
+            OpCodeInfo.init(0xA7, "AND A", NoArgs),
+            OpCodeInfo.init(0xAF, "XOR A", NoArgs),
+            OpCodeInfo.init(0xB1, "OR C", NoArgs),
+            OpCodeInfo.init(0xBE, "CP (HL)", NoArgs),
+            OpCodeInfo.init(0xC1, "POP BC", NoArgs),
+            OpCodeInfo.init(0xC3, "JMP", Single16Arg),
+            OpCodeInfo.init(0xC5, "PUSH BC", NoArgs),
+            OpCodeInfo.init(0xC8, "RET Z", NoArgs),
+            OpCodeInfo.init(0xC9, "RET", NoArgs),
+            OpCodeInfo.init(0xCA, "JP Z, a16", Single16Arg),
+            //OpCodeInfo.init(0xCB, "Xtended", Single16Arg),
+            OpCodeInfo.init(0xCD, "CALL a16", Single16Arg),
+            OpCodeInfo.init(0xD1, "POP DE", NoArgs),
+            OpCodeInfo.init(0xD5, "PUSH DE", NoArgs),
+            OpCodeInfo.init(0xE0, "LD (a8), A", Single8Arg),
+            OpCodeInfo.init(0xE1, "POP HL", NoArgs),
+            OpCodeInfo.init(0xE2, "LD (C), A", NoArgs),
+            OpCodeInfo.init(0xE5, "PUSH HL", Single8Arg),
+            OpCodeInfo.init(0xE6, "AND d8", Single8Arg),
+            OpCodeInfo.init(0xE9, "JP HL", NoArgs),
+            OpCodeInfo.init(0xEA, "LD (a16), A", Single16Arg),
+            OpCodeInfo.init(0xF0, "LD A, (a8)", Single8Arg),
+            OpCodeInfo.init(0xF3, "DI", NoArgs),
+            OpCodeInfo.init(0xF5, "PUSH AF", NoArgs),
+            OpCodeInfo.init(0xFE, "CP A,", Single8Arg),
+            OpCodeInfo.init(0xFA, "LD A (a16)", Single16Arg),
+            OpCodeInfo.init(0xFb, "EI", NoArgs),
+        };
+
+        const opcodesFunc = [_]struct { u8, opFunc }{
+            .{ 0x00, &nop },
+            .{ 0x01, &load_d16_to_bc },
+            .{ 0x02, &load_bc_indirect_to_a },
+            .{ 0x04, &inc_b },
+            .{ 0x05, &dec_b },
+            .{ 0x06, &load_d8_to_b },
+            .{ 0x0b, &dec_bc },
+            .{ 0x0c, &inc_c },
+            .{ 0x0d, &dec_c },
+            .{ 0x0e, &load_d8_to_c },
+            .{ 0x11, &load_d16_to_de },
+            .{ 0x13, &inc_de },
+            .{ 0x15, &dec_d },
+            .{ 0x16, &load_d8_to_d },
+            .{ 0x17, &rotate_left_a },
+            .{ 0x18, &jmp_s8 },
+            .{ 0x19, &add_de_to_hl },
+            .{ 0x1A, &load_indirectDE_to_a },
+            .{ 0x1D, &dec_e },
+            .{ 0x1E, &load_d8_to_e },
+            .{ 0x20, &jmp_nz_s8 },
+            .{ 0x21, &load_d16_to_HL },
+            .{ 0x22, &store_a_to_IndirectHL_inc },
+            .{ 0x23, &inc_HL },
+            .{ 0x24, &inc_H },
+            .{ 0x26, &load_d8_to_h },
+            .{ 0x28, &jmp_if_zero },
+            .{ 0x2a, &load_HL_indirect_inc_to_a },
+            .{ 0x2e, &load_d8_to_l },
+            .{ 0x30, &jump_not_carry_s8 },
+            .{ 0x31, &load_d16_to_sp },
+            .{ 0x32, &store_a_to_indirectHL_dec },
+            .{ 0x36, &store_d8_to_indirectHL },
+            .{ 0x3a, &load_indirectHL_dec_to_a },
+            .{ 0x3d, &dec_a },
+            .{ 0x3e, &load_d8_to_a },
+            .{ 0x42, &load_d_to_b },
+            .{ 0x47, &load_a_to_b },
+            .{ 0x4f, &load_a_to_c },
+            .{ 0x50, &load_b_to_d },
+            .{ 0x54, &load_h_to_d },
+            .{ 0x57, &load_a_to_d },
+            .{ 0x5D, &load_l_to_e },
+            .{ 0x5F, &load_a_to_e },
+            .{ 0x67, &load_a_to_h },
+            .{ 0x6b, &load_e_to_l },
+            .{ 0x6f, &load_a_to_l },
+            .{ 0x71, &store_c_to_indirectHL },
+            .{ 0x77, &store_a_to_indirectHL },
+            .{ 0x78, &load_b_to_a },
+            .{ 0x7a, &load_d_to_a },
+            .{ 0x7b, &load_e_to_a },
+            .{ 0x7c, &load_h_to_a },
+            .{ 0x7d, &load_l_to_a },
+            .{ 0x7e, &load_hl_indirect_to_a },
+            .{ 0x83, &add_a_to_e },
+            .{ 0x86, &add_a_to_hl_indirect },
+            .{ 0x87, &add_a_to_a },
+            .{ 0x90, &subtract_b_from_a },
+            .{ 0x95, &subtract_l_from_a },
+            .{ 0xA7, &and_a_with_a },
+            .{ 0xAF, &xor_a_with_a },
+            .{ 0xB1, &or_c_with_a },
+            .{ 0xBE, &compare_indirectHL_to_a },
+            .{ 0xC1, &pop_bc },
+            .{ 0xC3, &jmp },
+            .{ 0xC5, &push_bc },
+            .{ 0xC8, &return_from_call_condiional_on_z },
+            .{ 0xC9, &return_from_call },
+            .{ 0xCA, &jump_if_zero_a16 },
+            //.{0xCB, "Xtended", Single16Arg, &cb_extended},
+            .{ 0xCD, &call16 },
+            .{ 0xD1, &pop_de },
+            .{ 0xD5, &push_de },
+            .{ 0xE0, &load_a_to_indirect8 },
+            .{ 0xE1, &pop_to_HL },
+            .{ 0xE2, &store_a_to_indirect_c },
+            .{ 0xE5, &push_hl },
+            .{ 0xE6, &and_d8_to_a },
+            .{ 0xE9, &jmp_hl },
+            .{ 0xEA, &load_a_to_indirect16 },
+            .{ 0xF0, &load_indirect8_to_a },
+            .{ 0xF3, &disable_interrupts },
+            .{ 0xF5, &push_af },
+            .{ 0xFE, &compare_immediate8_ra },
+            .{ 0xFA, &load_indirect16_to_a },
+            .{ 0xFb, &enable_interrupts },
         };
 
         const extended_opcodesInfo = [_]OpCodeInfo{
-            OpCodeInfo.init(0x11, "RL C", NoArgs, &rotate_left_c),
-            OpCodeInfo.init(0x20, "SLA B", NoArgs, &shift_left_B),
-            OpCodeInfo.init(0x7c, "BIT 7, H", NoArgs, &copy_compl_bit7_to_z),
-            OpCodeInfo.init(0x87, "RES 0, A", NoArgs, &reset_a_bit0),
+            OpCodeInfo.init(0x11, "RL C", NoArgs),
+            OpCodeInfo.init(0x1A, "RR D", NoArgs),
+            OpCodeInfo.init(0x20, "SLA B", NoArgs),
+            OpCodeInfo.init(0x42, "BIT 0, D", NoArgs),
+            OpCodeInfo.init(0x7c, "BIT 7, H", NoArgs),
+            OpCodeInfo.init(0x87, "RES 0, A", NoArgs),
         };
 
-        const opcodetable, const jmptable = process_opcodetable(&opcodesInfo);
-        const extended_opcodetable, const extended_jmptable = process_opcodetable(&extended_opcodesInfo);
+        const extended_opcodesFunc = [_]struct { u8, opFunc }{
+            .{ 0x11, &rotate_left_c },
+            .{ 0x1A, &rotate_right_d },
+            .{ 0x20, &shift_left_B },
+            .{ 0x42, &copy_compl_bit0_to_d },
+            .{ 0x7c, &copy_compl_bit7_to_z },
+            .{ 0x87, &reset_a_bit0 },
+        };
+
+        const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
+        const extended_opcodetable, const extended_jmptable = process_opcodetable(&extended_opcodesInfo, &extended_opcodesFunc);
 
         return Cpu{
             .boot_rom = boot_rom,
@@ -1870,6 +1970,10 @@ const c = @cImport({
     @cInclude("SDL2/SDL.h");
 });
 const tracy = @import("tracy");
+const gen = @import("gen");
+const cpu_utils = @import("cpu_utils.zig");
+const OpCodeInfo = cpu_utils.OpCodeInfo;
+const ArgInfo = cpu_utils.ArgInfo;
 
 // This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
 const lib = @import("zig_hello_world_lib");
