@@ -30,32 +30,72 @@ pub fn main() !void {
     // });
     // defer opcodeArray.deinit();
 
-    const s =
-        \\fn get_opcodes_table() []OpCodeInfo {{
-        \\  const NoArgs = [_]ArgInfo{{ .None, .None }};
-        \\  const Single8Arg = [_]ArgInfo{{ .U8, .None }};
-        \\  const Single16Arg = [_]ArgInfo{{ .U16, .None }};
-        \\  return [_]OpCodeInfo {{
-    ;
-    try std.fmt.format(output_file.writer(), s, .{});
+    var opmetadata = try std.ArrayList(struct { u16, []const u8 }).initCapacity(arena, 256);
+    defer opmetadata.deinit();
 
-    for (parse_result.value.array.items[0..1]) |item| {
+    var extopmetadata = try std.ArrayList(struct { u16, []const u8 }).initCapacity(arena, 256);
+    defer extopmetadata.deinit();
+
+    for (parse_result.value.array.items) |item| {
         // for (item.object.keys()) |value| {
         //     std.debug.print("{s}\n", .{value});
         // }
-        const opcode = item.object.get("opCode").?.string;
+        const opcode_str = item.object.get("opCode").?.string;
+        const opcode = try std.fmt.parseInt(u16, opcode_str, 16);
         const mnemonic = item.object.get("mnemonic").?.string;
+        if (opcode <= 0xFF) {
+            try opmetadata.append(.{ opcode, mnemonic });
+        } else {
+            try extopmetadata.append(.{ opcode, mnemonic });
+        }
+    }
+    const s =
+        \\const main = @import("main");
+        \\const cpu_utils = main.cpu_utils;
+        \\const OpCodeInfo = cpu_utils.OpCodeInfo;
+        \\const ArgInfo = cpu_utils.ArgInfo;
+        \\
+        \\const NoArgs = [_]ArgInfo{{ .None, .None }};
+        \\const Single8Arg = [_]ArgInfo{{ .U8, .None }};
+        \\const Single16Arg = [_]ArgInfo{{ .U16, .None }};
+        \\
+    ;
+    try std.fmt.format(output_file.writer(), s, .{});
+
+    try generate_opcode_func(output_file.writer(), "get_opcodes_table", opmetadata);
+    try generate_opcode_func(output_file.writer(), "get_extopcodes_table", extopmetadata);
+}
+
+fn generate_opcode_func(writer: anytype, func_name: []const u8, opmetadata: std.ArrayList(struct { u16, []const u8 })) !void {
+    const s =
+        \\pub fn {s}() []const OpCodeInfo {{
+        \\    const result = [_]OpCodeInfo {{
+        \\
+    ;
+    try std.fmt.format(writer, s, .{func_name});
+
+    for (opmetadata.items) |item| {
+        const opcode = item[0] & 0xFF;
+        const mnemonic = item[1];
 
         //todo: d8, a8, s8, d16, a16,
         const d8Found = std.mem.indexOf(u8, mnemonic, "d8");
+        const a8Found = std.mem.indexOf(u8, mnemonic, "a8");
+        const s8Found = std.mem.indexOf(u8, mnemonic, "s8");
+        const a168Found = std.mem.indexOf(u8, mnemonic, "a16");
+        const d168Found = std.mem.indexOf(u8, mnemonic, "d16");
 
-        const opargs = if (d8Found != null) "Single8Arg" else "NoArgs";
+        const opargs = if (d8Found != null or a8Found != null or s8Found != null) "Single8Arg" else if (d168Found != null or a168Found != null) "Single16Arg" else "NoArgs";
 
-        try std.fmt.format(output_file.writer(), "OpCodeInfo.init(0x{s}, \"{s}\", {s}),", .{ opcode, mnemonic, opargs });
+        try std.fmt.format(writer, "OpCodeInfo.init(0x{x:02}, \"{s}\", {s}),\n", .{ opcode, mnemonic, opargs });
     }
-
-    try std.fmt.format(output_file.writer(), "}};", .{});
-    try std.fmt.format(output_file.writer(), "}}", .{});
+    const s2 =
+        \\  }};
+        \\  return &result;
+        \\}}
+        \\
+    ;
+    try std.fmt.format(writer, s2, .{});
 }
 
 const std = @import("std");

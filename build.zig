@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
 
     const run_tool_step = b.addRunArtifact(tool);
     run_tool_step.addFileArg(b.path("tools\\instructions-data.json"));
-    const gen_output = run_tool_step.addOutputFileArg("gen.zig");
+    const gen_output = run_tool_step.addOutputFileArg("cpu_opcode_matadata_gen.zig");
 
     // This creates a "module", which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
@@ -51,8 +51,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe_mod.addAnonymousImport("gen", .{
+    exe_mod.addAnonymousImport("cpu_opcode_matadata_gen", .{
         .root_source_file = gen_output,
+        .imports = &[_]std.Build.Module.Import{.{ .name = "main", .module = exe_mod }},
     });
 
     const sdl_dep = b.dependency("SDL", .{

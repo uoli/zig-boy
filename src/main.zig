@@ -1179,100 +1179,7 @@ const Cpu = struct {
     extended_jmptable: [256]opFunc,
 
     pub fn init(boot_rom: []const u8, bus: *Bus) Cpu {
-        const NoArgs = [_]ArgInfo{ .None, .None };
-        const Single8Arg = [_]ArgInfo{ .U8, .None };
-        const Single16Arg = [_]ArgInfo{ .U16, .None };
-
-        const opcodesInfo = [_]OpCodeInfo{
-            OpCodeInfo.init(0x00, "NOP", NoArgs),
-            OpCodeInfo.init(0x01, "LD BC, d16", Single16Arg),
-            OpCodeInfo.init(0x02, "LD (BC), A", NoArgs),
-            OpCodeInfo.init(0x04, "INC B", NoArgs),
-            OpCodeInfo.init(0x05, "DEC B", NoArgs),
-            OpCodeInfo.init(0x06, "LD B, d8", Single8Arg),
-            OpCodeInfo.init(0x0b, "DEC BC", NoArgs),
-            OpCodeInfo.init(0x0c, "INC C", NoArgs),
-            OpCodeInfo.init(0x0d, "DEC C", NoArgs),
-            OpCodeInfo.init(0x0e, "LD C, d8", NoArgs),
-            OpCodeInfo.init(0x11, "LD DE, d16", Single16Arg),
-            OpCodeInfo.init(0x13, "INC DE", NoArgs),
-            OpCodeInfo.init(0x15, "DEC D", NoArgs),
-            OpCodeInfo.init(0x16, "LD D, d8", Single8Arg),
-            OpCodeInfo.init(0x17, "RLA", NoArgs),
-            OpCodeInfo.init(0x18, "JR s8", Single8Arg),
-            OpCodeInfo.init(0x19, "ADD HL, DE", NoArgs),
-            OpCodeInfo.init(0x1A, "LD A,(DE)", NoArgs),
-            OpCodeInfo.init(0x1D, "DEC E", NoArgs),
-            OpCodeInfo.init(0x1E, "LD E, d8", Single8Arg),
-            OpCodeInfo.init(0x20, "JR NZ, s8", Single8Arg),
-            OpCodeInfo.init(0x21, "LD HL, d16", Single16Arg),
-            OpCodeInfo.init(0x22, "LD (HL+), A", NoArgs),
-            OpCodeInfo.init(0x23, "INC HL", NoArgs),
-            OpCodeInfo.init(0x24, "INC H", NoArgs),
-            OpCodeInfo.init(0x26, "LD H, d8", Single8Arg),
-            OpCodeInfo.init(0x28, "JR Z", Single8Arg),
-            OpCodeInfo.init(0x2a, "LD A, (HL+)", NoArgs),
-            OpCodeInfo.init(0x2e, "LD L, d8", Single8Arg),
-            OpCodeInfo.init(0x30, "JR NC, s8", Single8Arg),
-            OpCodeInfo.init(0x31, "LD SP, d16", Single16Arg),
-            OpCodeInfo.init(0x32, "LD (HL-), A", NoArgs),
-            OpCodeInfo.init(0x36, "LD (HL), d8", Single8Arg),
-            OpCodeInfo.init(0x3a, "LD A, (HL-)", Single8Arg),
-            OpCodeInfo.init(0x3d, "DEC A", NoArgs),
-            OpCodeInfo.init(0x3e, "LD A, d8", Single8Arg),
-            OpCodeInfo.init(0x42, "LD B, D", NoArgs),
-            OpCodeInfo.init(0x47, "LD B, A", NoArgs),
-            OpCodeInfo.init(0x4f, "LD C, A", NoArgs),
-            OpCodeInfo.init(0x50, "LD D, B", NoArgs),
-            OpCodeInfo.init(0x54, "LD D, H", NoArgs),
-            OpCodeInfo.init(0x57, "LD D, A", NoArgs),
-            OpCodeInfo.init(0x5D, "LD E, L", NoArgs),
-            OpCodeInfo.init(0x5F, "LD E, A", NoArgs),
-            OpCodeInfo.init(0x67, "LD H, A", NoArgs),
-            OpCodeInfo.init(0x6b, "LD L, E", NoArgs),
-            OpCodeInfo.init(0x6f, "LD L, A", NoArgs),
-            OpCodeInfo.init(0x71, "LD (HL), C", NoArgs),
-            OpCodeInfo.init(0x77, "LD (HL), A", NoArgs),
-            OpCodeInfo.init(0x78, "LD A, B", NoArgs),
-            OpCodeInfo.init(0x7a, "LD A, D", NoArgs),
-            OpCodeInfo.init(0x7b, "LD A, E", NoArgs),
-            OpCodeInfo.init(0x7c, "LD A, H", NoArgs),
-            OpCodeInfo.init(0x7d, "LD A, L", NoArgs),
-            OpCodeInfo.init(0x7e, "LD A, (HL)", NoArgs),
-            OpCodeInfo.init(0x83, "ADD A, E", NoArgs),
-            OpCodeInfo.init(0x86, "ADD A, (HL)", NoArgs),
-            OpCodeInfo.init(0x87, "ADD A, A", NoArgs),
-            OpCodeInfo.init(0x90, "SUB B", NoArgs),
-            OpCodeInfo.init(0x95, "SUB L", NoArgs),
-            //OpCodeInfo.init(0x96, "SUB (HL)", NoArgs),
-            OpCodeInfo.init(0xA7, "AND A", NoArgs),
-            OpCodeInfo.init(0xAF, "XOR A", NoArgs),
-            OpCodeInfo.init(0xB1, "OR C", NoArgs),
-            OpCodeInfo.init(0xBE, "CP (HL)", NoArgs),
-            OpCodeInfo.init(0xC1, "POP BC", NoArgs),
-            OpCodeInfo.init(0xC3, "JMP", Single16Arg),
-            OpCodeInfo.init(0xC5, "PUSH BC", NoArgs),
-            OpCodeInfo.init(0xC8, "RET Z", NoArgs),
-            OpCodeInfo.init(0xC9, "RET", NoArgs),
-            OpCodeInfo.init(0xCA, "JP Z, a16", Single16Arg),
-            //OpCodeInfo.init(0xCB, "Xtended", Single16Arg),
-            OpCodeInfo.init(0xCD, "CALL a16", Single16Arg),
-            OpCodeInfo.init(0xD1, "POP DE", NoArgs),
-            OpCodeInfo.init(0xD5, "PUSH DE", NoArgs),
-            OpCodeInfo.init(0xE0, "LD (a8), A", Single8Arg),
-            OpCodeInfo.init(0xE1, "POP HL", NoArgs),
-            OpCodeInfo.init(0xE2, "LD (C), A", NoArgs),
-            OpCodeInfo.init(0xE5, "PUSH HL", Single8Arg),
-            OpCodeInfo.init(0xE6, "AND d8", Single8Arg),
-            OpCodeInfo.init(0xE9, "JP HL", NoArgs),
-            OpCodeInfo.init(0xEA, "LD (a16), A", Single16Arg),
-            OpCodeInfo.init(0xF0, "LD A, (a8)", Single8Arg),
-            OpCodeInfo.init(0xF3, "DI", NoArgs),
-            OpCodeInfo.init(0xF5, "PUSH AF", NoArgs),
-            OpCodeInfo.init(0xFE, "CP A,", Single8Arg),
-            OpCodeInfo.init(0xFA, "LD A (a16)", Single16Arg),
-            OpCodeInfo.init(0xFb, "EI", NoArgs),
-        };
+        const opcodesInfo = cpu_opcode_matadata_gen.get_opcodes_table();
 
         const opcodesFunc = [_]struct { u8, opFunc }{
             .{ 0x00, &nop },
@@ -1364,14 +1271,7 @@ const Cpu = struct {
             .{ 0xFb, &enable_interrupts },
         };
 
-        const extended_opcodesInfo = [_]OpCodeInfo{
-            OpCodeInfo.init(0x11, "RL C", NoArgs),
-            OpCodeInfo.init(0x1A, "RR D", NoArgs),
-            OpCodeInfo.init(0x20, "SLA B", NoArgs),
-            OpCodeInfo.init(0x42, "BIT 0, D", NoArgs),
-            OpCodeInfo.init(0x7c, "BIT 7, H", NoArgs),
-            OpCodeInfo.init(0x87, "RES 0, A", NoArgs),
-        };
+        const extended_opcodesInfo = cpu_opcode_matadata_gen.get_extopcodes_table();
 
         const extended_opcodesFunc = [_]struct { u8, opFunc }{
             .{ 0x11, &rotate_left_c },
@@ -1382,8 +1282,8 @@ const Cpu = struct {
             .{ 0x87, &reset_a_bit0 },
         };
 
-        const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
-        const extended_opcodetable, const extended_jmptable = process_opcodetable(&extended_opcodesInfo, &extended_opcodesFunc);
+        const opcodetable, const jmptable = process_opcodetable(opcodesInfo, &opcodesFunc);
+        const extended_opcodetable, const extended_jmptable = process_opcodetable(extended_opcodesInfo, &extended_opcodesFunc);
 
         return Cpu{
             .boot_rom = boot_rom,
@@ -1970,8 +1870,8 @@ const c = @cImport({
     @cInclude("SDL2/SDL.h");
 });
 const tracy = @import("tracy");
-const gen = @import("gen");
-const cpu_utils = @import("cpu_utils.zig");
+const cpu_opcode_matadata_gen = @import("cpu_opcode_matadata_gen");
+pub const cpu_utils = @import("cpu_utils.zig");
 const OpCodeInfo = cpu_utils.OpCodeInfo;
 const ArgInfo = cpu_utils.ArgInfo;
 
