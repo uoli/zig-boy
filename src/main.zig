@@ -610,6 +610,7 @@ pub const Cpu = struct {
             .{ 0x31, &cf.load_d16_to_sp },
             .{ 0x32, &cf.store_a_to_indirectHL_dec },
             .{ 0x36, &cf.store_d8_to_indirectHL },
+            .{ 0x37, &cf.set_carry_flag },
             .{ 0x3a, &cf.load_indirectHL_dec_to_a },
             .{ 0x3d, &cf.dec_a },
             .{ 0x3e, &cf.load_d8_to_a },
@@ -640,6 +641,7 @@ pub const Cpu = struct {
             .{ 0xA7, &cf.and_a_with_a },
             .{ 0xAF, &cf.xor_a_with_a },
             .{ 0xB1, &cf.or_c_with_a },
+            .{ 0xB3, &cf.or_e_with_a },
             .{ 0xBE, &cf.compare_indirectHL_to_a },
             .{ 0xC1, &cf.pop_bc },
             .{ 0xC3, &cf.jmp },
@@ -746,6 +748,9 @@ pub const Cpu = struct {
             return self.boot_rom[address];
         }
         switch (address) {
+            0xFF00 => {
+                return @bitCast(self.joypad);
+            },
             0xFFFF => {
                 return @bitCast(self.interrupt.interrupt_enabled);
             },
@@ -845,9 +850,9 @@ pub const Cpu = struct {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
         {
-            const watched_pc = 0x100;
+            const watched_pcs = [_]u16{ 0x100, 0x2004 };
             //const watched_pc = 0xFFFF;
-            if (self.pc == watched_pc)
+            if (contains(u16, &watched_pcs, self.pc))
                 self.enable_trace = true;
 
             if (self.enable_trace)
@@ -858,6 +863,15 @@ pub const Cpu = struct {
         clocks += self.decode_and_execute();
 
         return clocks;
+    }
+
+    fn contains(comptime T: type, haystack: []const T, needle: T) bool {
+        for (haystack) |item| {
+            if (item == needle) {
+                return true;
+            }
+        }
+        return false;
     }
 
     inline fn execute_interrupt(self: *Cpu, interrupt_address: u16) mcycles {

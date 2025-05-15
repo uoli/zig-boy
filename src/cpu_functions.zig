@@ -43,7 +43,7 @@ fn inc_u16(cpu: *Cpu, reg: *u16) !mcycles {
     return 2;
 }
 
-pub fn rotate_l(cpu: *Cpu, data: *u8) void {
+fn rotate_l(cpu: *Cpu, data: *u8) void {
     const carry: u1 = if (data.* & 0b1000_0000 != 0) 1 else 0;
     const shifted = (data.* << 1);
     const around = @as(u8, cpu.r.s.f.c);
@@ -55,7 +55,7 @@ pub fn rotate_l(cpu: *Cpu, data: *u8) void {
     cpu.r.s.f.c = carry;
 }
 
-pub fn rotate_r(cpu: *Cpu, data: *u8) void {
+fn rotate_r(cpu: *Cpu, data: *u8) void {
     const carry: u1 = if (data.* & 0b0000_0001 != 0) 1 else 0;
     const shifted = (data.* >> 1);
     const around = @as(u8, cpu.r.s.f.c);
@@ -65,6 +65,15 @@ pub fn rotate_r(cpu: *Cpu, data: *u8) void {
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 0;
     cpu.r.s.f.c = carry;
+}
+
+pub fn or_r1_with_r2(cpu: *Cpu, r1: *u8, r2: *u8) !mcycles {
+    r2.* |= r1.*;
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 0;
+    cpu.r.s.f.c = 0;
+    return 1;
 }
 
 pub fn load_d16_to_bc(cpu: *Cpu) !mcycles {
@@ -285,6 +294,13 @@ pub fn store_a_to_indirectHL_dec(cpu: *Cpu) !mcycles {
 pub fn store_d8_to_indirectHL(cpu: *Cpu) !mcycles {
     cpu.store(cpu.r.f.HL, cpu.fetch());
     return 3;
+}
+
+pub fn set_carry_flag(cpu: *Cpu) !mcycles {
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 0;
+    cpu.r.s.f.c = 1;
+    return 1;
 }
 
 pub fn load_indirectHL_dec_to_a(cpu: *Cpu) !mcycles {
@@ -543,12 +559,11 @@ pub fn xor_a_with_a(cpu: *Cpu) !mcycles {
 }
 
 pub fn or_c_with_a(cpu: *Cpu) !mcycles {
-    cpu.r.s.a |= cpu.r.s.c;
-    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
-    cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = 0;
-    cpu.r.s.f.c = 0;
-    return 1;
+    return or_r1_with_r2(cpu, &cpu.r.s.c, &cpu.r.s.a);
+}
+
+pub fn or_e_with_a(cpu: *Cpu) !mcycles {
+    return or_r1_with_r2(cpu, &cpu.r.s.e, &cpu.r.s.a);
 }
 
 pub fn compare_indirectHL_to_a(cpu: *Cpu) !mcycles {
