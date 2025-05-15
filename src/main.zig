@@ -850,9 +850,9 @@ pub const Cpu = struct {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
         {
-            const watched_pcs = [_]u16{ 0x100, 0x2004 };
+            const watched_pcs = [_]u16{ 0x100, 0x2004, 0x6155 };
             //const watched_pc = 0xFFFF;
-            if (contains(u16, &watched_pcs, self.pc))
+            if (contains(u16, &watched_pcs, self.pc) == true)
                 self.enable_trace = true;
 
             if (self.enable_trace)

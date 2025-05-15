@@ -19,12 +19,12 @@ fn dec_8(cpu: *Cpu, reg: *u8) !mcycles {
     return 1;
 }
 
-fn dec_16(cpu: *Cpu, reg: *u16) !mcycles {
+fn dec_16(_: *Cpu, reg: *u16) !mcycles {
     reg.* -%= 1;
-    cpu.r.s.f.z = if (reg.* == 0) 1 else 0;
-    cpu.r.s.f.n = 1;
-    cpu.r.s.f.h = if ((reg.* & 0x0f) == 0x0f) 1 else 0;
-    return 1;
+    //cpu.r.s.f.z = if (reg.* == 0) 1 else 0;
+    //cpu.r.s.f.n = 1;
+    //cpu.r.s.f.h = if ((reg.* & 0x0f) == 0x0f) 1 else 0;
+    return 2;
 }
 
 fn inc_8(cpu: *Cpu, reg: *u8) !mcycles {
