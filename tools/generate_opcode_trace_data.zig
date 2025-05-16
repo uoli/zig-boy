@@ -65,8 +65,8 @@ pub fn main() !void {
 
 fn generate_opcode_func(writer: anytype, func_name: []const u8, opmetadata: std.ArrayList(struct { u16, []const u8 })) !void {
     const s =
-        \\pub fn {s}() [256]OpCodeInfo {{
-        \\ var result: [256]OpCodeInfo = undefined;
+        \\pub fn {s}(result: *[256]OpCodeInfo) void {{
+        \\ //var result: [256]OpCodeInfo = undefined;
         \\
     ;
     try std.fmt.format(writer, s, .{func_name});
@@ -87,7 +87,7 @@ fn generate_opcode_func(writer: anytype, func_name: []const u8, opmetadata: std.
         try std.fmt.format(writer, "result[0x{x:02}] = OpCodeInfo.init(0x{x:02}, \"{s}\", {s});\n", .{ opcode, opcode, mnemonic, opargs });
     }
     const s2 =
-        \\  return result;
+        \\  //return result;
         \\}}
         \\
     ;

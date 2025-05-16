@@ -525,8 +525,12 @@ fn process_opcodetable(table: []const OpCodeInfo, func_table: []const struct { u
     return .{ opcodetable, jmptable };
 }
 
+const JoypadSelectState = enum(u1) { Selected = 0, NotSelected = 1 };
+const JoypadButtonFlagState = enum(u1) { Pressed = 0, NotPressed = 1 };
+
 pub const Cpu = struct {
     boot_rom: []const u8,
+    cycles_counter: u64,
     bus: *Bus,
     r: Registers,
     sp: u16,
@@ -540,12 +544,12 @@ pub const Cpu = struct {
         _: u5,
     } },
     joypad: packed struct {
-        P10_Right_or_A: u1,
-        P11_Left_or_B: u1,
-        P12_Up_or_Select: u1,
-        P13_Down_or_Start: u1,
-        P14_Select_Direction: u1,
-        P15_Select_Button: u1,
+        P10_Right_or_A: JoypadButtonFlagState,
+        P11_Left_or_B: JoypadButtonFlagState,
+        P12_Up_or_Select: JoypadButtonFlagState,
+        P13_Down_or_Start: JoypadButtonFlagState,
+        P14_Select_Direction: JoypadSelectState,
+        P15_Select_Button: JoypadSelectState,
         _: u2,
     },
     sound_flags: packed struct {
@@ -572,7 +576,8 @@ pub const Cpu = struct {
     extended_jmptable: [256]opFunc,
 
     pub fn init(boot_rom: []const u8, bus: *Bus) Cpu {
-        const opcodesInfo = cpu_opcode_matadata_gen.get_opcodes_table();
+        var opcodesInfo: [256]OpCodeInfo = undefined;
+        cpu_opcode_matadata_gen.get_opcodes_table(&opcodesInfo);
         const cf = @import("cpu_functions.zig");
 
         const opcodesFunc = [_]struct { u8, opFunc }{
@@ -668,7 +673,8 @@ pub const Cpu = struct {
             .{ 0xFb, &cf.enable_interrupts },
         };
 
-        const extended_opcodesInfo = cpu_opcode_matadata_gen.get_extopcodes_table();
+        var extended_opcodesInfo: [256]OpCodeInfo = undefined;
+        cpu_opcode_matadata_gen.get_extopcodes_table(&extended_opcodesInfo);
 
         const extended_opcodesFunc = [_]struct { u8, opFunc }{
             .{ 0x11, &cf.rotate_left_c },
@@ -684,6 +690,7 @@ pub const Cpu = struct {
 
         return Cpu{
             .boot_rom = boot_rom,
+            .cycles_counter = 0,
             .disable_boot_rom = 0,
             .bus = bus,
             .r = Registers.init(),
@@ -715,12 +722,12 @@ pub const Cpu = struct {
             },
             .timer = .{ .modulo = 0, .control = .{ .clock_select = 0, .timer_stop = false, ._ = undefined } },
             .joypad = .{
-                .P10_Right_or_A = 0,
-                .P11_Left_or_B = 0,
-                .P12_Up_or_Select = 0,
-                .P13_Down_or_Start = 0,
-                .P14_Select_Direction = 0,
-                .P15_Select_Button = 0,
+                .P10_Right_or_A = JoypadButtonFlagState.NotPressed,
+                .P11_Left_or_B = JoypadButtonFlagState.NotPressed,
+                .P12_Up_or_Select = JoypadButtonFlagState.NotPressed,
+                .P13_Down_or_Start = JoypadButtonFlagState.NotPressed,
+                .P14_Select_Direction = JoypadSelectState.NotSelected,
+                .P15_Select_Button = JoypadSelectState.NotSelected,
                 ._ = 0,
             },
             .sound_flags = .{
@@ -770,7 +777,10 @@ pub const Cpu = struct {
     pub fn store(self: *Cpu, address: u16, value: u8) void {
         switch (address) {
             0xFF00 => {
-                self.joypad = @bitCast(value);
+                //Only bit 5 and 4 are actually writable
+                const currentVal: u8 = @bitCast(self.joypad);
+                const newVal: u8 = currentVal | (value & 0b00110000);
+                self.joypad = @bitCast(newVal);
             },
             0xFF01 => {
                 self.serial_data_transfer.data = value;
@@ -819,6 +829,9 @@ pub const Cpu = struct {
     }
 
     pub fn push16(self: *Cpu, value: u16) void {
+        if (value == 0x60ed or value == 0x60e0 or value == 0x60dd or value == 0x60ca) {
+            @breakpoint();
+        }
         self.sp -= 1;
         self.store(self.sp, @intCast(value >> 8));
         self.sp -= 1;
@@ -835,22 +848,39 @@ pub const Cpu = struct {
 
     fn decode_and_execute(self: *Cpu) mcycles {
         const instruction = self.fetch();
+        const initialHL = self.r.f.HL;
+        var cycles: mcycles = 0;
+
         if (instruction == 0xCB) {
             const extended_instruction = self.fetch();
-            return self.extended_jmptable[extended_instruction](self) catch {
+            if (extended_instruction == 124 and self.disable_boot_rom == 1) {
+                @breakpoint();
+            }
+            cycles = self.extended_jmptable[extended_instruction](self) catch {
                 std.debug.panic("Error decoding and executing ext opcode 0xCB, 0x{x:02}\n", .{extended_instruction});
             };
+        } else {
+            cycles = self.jmptable[instruction](self) catch {
+                std.debug.panic("Error decoding and executing opcode 0x{x:02}\n", .{instruction});
+            };
         }
-        return self.jmptable[instruction](self) catch {
-            std.debug.panic("Error decoding and executing opcode 0x{x:02}\n", .{instruction});
-        };
+        const afterHL = self.r.f.HL;
+        if (initialHL != afterHL and afterHL == 0x64f8) {
+            @breakpoint();
+            std.debug.print("HL wirtten with {x}\n", .{afterHL});
+        }
+        if (self.pc == 0x614a) {
+            @breakpoint();
+        }
+        return cycles;
     }
 
     pub fn step(self: *Cpu) mcycles {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
         {
-            const watched_pcs = [_]u16{ 0x100, 0x2004, 0x6155 };
+            //const watched_pcs = [_]u16{ 0x2004, 0x6155 };
+            const watched_pcs = [_]u16{};
             //const watched_pc = 0xFFFF;
             if (contains(u16, &watched_pcs, self.pc) == true)
                 self.enable_trace = true;
@@ -861,7 +891,7 @@ pub const Cpu = struct {
 
         var clocks = execute_interrupts_if_enabled(self);
         clocks += self.decode_and_execute();
-
+        self.cycles_counter += clocks;
         return clocks;
     }
 
@@ -1079,7 +1109,8 @@ const Gpu = struct {
 
                     self.lcd_status.mode = if (self.ly < 144) 2 else 1;
                     check_lyc(self);
-                    if (self.lcd_status.mode == 1) {
+                    if (self.lcd_status.mode == 1) { //Start V-Blank
+                        self.bus.raise_cpu_interrupt(Cpu.Interrup.VBlank);
                         return GpuStepResult.FrameReady;
                     }
                 }
