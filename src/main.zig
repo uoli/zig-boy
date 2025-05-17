@@ -541,11 +541,16 @@ pub const Cpu = struct {
     interrupt: struct { enabled: bool, interrupt_flag: Interrupts, interrupt_enabled: Interrupts },
     enable_trace: bool,
     disable_boot_rom: u8,
-    timer: struct { modulo: u8, control: packed struct {
-        clock_select: u2,
-        timer_stop: bool,
-        _: u5,
-    } },
+    timer: struct {
+        modulo: u8,
+        divider_register: u16,
+        counter: u8,
+        control: packed struct {
+            clock_select: u2,
+            timer_running: bool,
+            _: u5,
+        },
+    },
     joypad: packed struct {
         P10_Right_or_A: JoypadButtonFlagState,
         P11_Left_or_B: JoypadButtonFlagState,
@@ -651,8 +656,10 @@ pub const Cpu = struct {
         jmptable[0x83] = &cf.add_a_to_e;
         jmptable[0x86] = &cf.add_a_to_hl_indirect;
         jmptable[0x87] = &cf.add_a_to_a;
+        jmptable[0x88] = &cf.add_b_cy_a_to_a;
         jmptable[0x90] = &cf.subtract_b_from_a;
         jmptable[0x95] = &cf.subtract_l_from_a;
+        jmptable[0x98] = &cf.subtract_a_b_cf;
         jmptable[0xA7] = &cf.and_a_with_a;
         jmptable[0xAF] = &cf.xor_a_with_a;
         jmptable[0xB1] = &cf.or_c_with_a;
@@ -708,9 +715,9 @@ pub const Cpu = struct {
             .sp = 0xFFFE,
             .pc = 0x0,
             .enable_trace = false,
-            .opcodetable = undefined,
+            .opcodetable = opcodetable,
             .jmptable = jmptable,
-            .extended_opcodetable = undefined,
+            .extended_opcodetable = extended_opcodetable,
             .extended_jmptable = extended_jmptable,
             .interrupt = .{
                 .enabled = true,
@@ -731,7 +738,16 @@ pub const Cpu = struct {
                     ._ = undefined,
                 },
             },
-            .timer = .{ .modulo = 0, .control = .{ .clock_select = 0, .timer_stop = false, ._ = undefined } },
+            .timer = .{
+                .modulo = 0,
+                .control = .{
+                    .clock_select = 0,
+                    .timer_running = false,
+                    ._ = undefined,
+                },
+                .divider_register = 0,
+                .counter = 0,
+            },
             .joypad = .{
                 .P10_Right_or_A = JoypadButtonFlagState.NotPressed,
                 .P11_Left_or_B = JoypadButtonFlagState.NotPressed,
@@ -774,6 +790,9 @@ pub const Cpu = struct {
             0xFF00 => {
                 return @bitCast(self.joypad);
             },
+            0xFF04 => {
+                return @truncate(self.timer.divider_register);
+            },
             0xFFFF => {
                 return @bitCast(self.interrupt.interrupt_enabled);
             },
@@ -804,6 +823,9 @@ pub const Cpu = struct {
             0xFF02 => {
                 //Serial Data Transfer? ignore for now
                 self.serial_data_transfer.control = @bitCast(value);
+            },
+            0xFF04 => {
+                self.timer.divider_register = 0;
             },
             0xFF06 => {
                 self.timer.modulo = value;
@@ -855,6 +877,45 @@ pub const Cpu = struct {
             self.dma.requested = false;
         } else {
             self.dma.cycles_remaining -= @intCast(cycles_elapsed);
+        }
+    }
+
+    fn tick_timer(self: *Cpu, cycles_elapsed: mcycles) void {
+        //main clock = 4194304 hz in t-cycles
+
+        //timer_clock_0 = 1 -> 4096hz   in t-cycles, 1024 times slower
+        //timer_clock_1 = 1 -> 262144hz in t-cycles, 16   times slower
+        //timer_clock_2 = 1 -> 65536hz  in t-cycles, 64   times slower
+        //timer_clock_3 = 1 -> 16384hz  in t-cycles, 256  times slower
+
+        const start_divider_val = self.timer.divider_register;
+        self.timer.divider_register +%= @intCast(cycles_elapsed);
+
+        if (self.timer.control.timer_running) {
+            var counter_increase: u8 = 0;
+            switch (self.timer.control.clock_select) {
+                0 => {
+                    const timer4bit = (start_divider_val & 0b1111111111) + @as(u16, @intCast(cycles_elapsed));
+                    counter_increase = @intCast(timer4bit % 1024);
+                },
+                1 => {
+                    const timer16bit = (start_divider_val & 0b1111) + @as(u16, @intCast(cycles_elapsed));
+                    counter_increase = @intCast(timer16bit % 16);
+                },
+                2 => {
+                    const timer64bit = (start_divider_val & 0b111111) + @as(u16, @intCast(cycles_elapsed));
+                    counter_increase = @intCast(timer64bit % 64);
+                },
+                3 => {
+                    const timer256bit = (start_divider_val & 0xFF) + @as(u16, @intCast(cycles_elapsed));
+                    counter_increase = @intCast(timer256bit % 256);
+                },
+            }
+            self.timer.counter, const overflow = @addWithOverflow(self.timer.counter, counter_increase);
+            if (overflow == 1) {
+                self.timer.counter = self.timer.modulo;
+                self.raise_interrupt(Interrup.Timer);
+            }
         }
     }
 
@@ -921,8 +982,8 @@ pub const Cpu = struct {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
         {
-            //const watched_pcs = [_]u16{ 0x2004, 0x6155 };
-            const watched_pcs = [_]u16{};
+            const watched_pcs = [_]u16{ 0x60a7, 0x6155 };
+            //const watched_pcs = [_]u16{};
             //const watched_pc = 0xFFFF;
             if (contains(u16, &watched_pcs, self.pc) == true)
                 self.enable_trace = true;
@@ -934,6 +995,7 @@ pub const Cpu = struct {
         var clocks = execute_interrupts_if_enabled(self);
         clocks += self.decode_and_execute();
         self.handle_dma(clocks);
+        self.tick_timer(clocks);
         self.cycles_counter += clocks;
         return clocks;
     }

@@ -262,12 +262,33 @@ pub fn add_a_to_a(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+pub fn add_b_cy_a_to_a(cpu: *Cpu) !mcycles {
+    var val, const overflow1 = @addWithOverflow(cpu.r.s.a, cpu.r.s.b);
+    val, const overflow2 = @addWithOverflow(val, cpu.r.s.f.c);
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) + (cpu.r.s.b & 0x0F) + cpu.r.s.f.c > 0xF) 1 else 0; //TODO: find simpler way?
+    cpu.r.s.f.c = overflow1 | overflow2;
+    return 1;
+}
+
 pub fn subtract_l_from_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a -= cpu.r.s.l;
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
     cpu.r.s.f.n = 1;
     cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) < (cpu.r.s.l & 0x0F)) 1 else 0;
     cpu.r.s.f.c = if (cpu.r.s.a < cpu.r.s.l) 1 else 0;
+    return 1;
+}
+
+pub fn subtract_a_b_cf(cpu: *Cpu) !mcycles {
+    var val, const overflow1 = @subWithOverflow(cpu.r.s.a, cpu.r.s.b);
+    val, const overflow2 = @subWithOverflow(cpu.r.s.a, cpu.r.s.f.c);
+    cpu.r.s.a = val;
+    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.n = 1;
+    cpu.r.s.f.h = if ((val & 0x0F) < (val)) 1 else 0;
+    cpu.r.s.f.c = overflow1 | overflow2;
     return 1;
 }
 
