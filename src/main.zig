@@ -614,6 +614,7 @@ pub const Cpu = struct {
         jmptable[0x04] = &cf.inc_b;
         jmptable[0x05] = &cf.dec_b;
         jmptable[0x06] = &cf.load_d8_to_b;
+        jmptable[0x07] = &cf.rotate_left_carry_a;
         jmptable[0x09] = &cf.add_HL_BC;
         jmptable[0x0b] = &cf.dec_bc;
         jmptable[0x0c] = &cf.inc_c;
@@ -638,6 +639,7 @@ pub const Cpu = struct {
         jmptable[0x24] = &cf.inc_H;
         jmptable[0x26] = &cf.load_d8_to_h;
         jmptable[0x28] = &cf.jmp_if_zero;
+        jmptable[0x29] = &cf.add_hl_hl;
         jmptable[0x2a] = &cf.load_HL_indirect_inc_to_a;
         jmptable[0x2c] = &cf.inc_l;
         jmptable[0x2e] = &cf.load_d8_to_l;
@@ -647,20 +649,25 @@ pub const Cpu = struct {
         jmptable[0x32] = &cf.store_a_to_indirectHL_dec;
         jmptable[0x36] = &cf.store_d8_to_indirectHL;
         jmptable[0x37] = &cf.set_carry_flag;
+        jmptable[0x38] = &cf.jump_s8_if_carry;
         jmptable[0x3a] = &cf.load_indirectHL_dec_to_a;
         jmptable[0x3c] = &cf.inc_a;
         jmptable[0x3d] = &cf.dec_a;
         jmptable[0x3e] = &cf.load_d8_to_a;
+        jmptable[0x41] = &cf.load_c_to_b;
         jmptable[0x42] = &cf.load_d_to_b;
         jmptable[0x44] = &cf.load_h_to_b;
         jmptable[0x47] = &cf.load_a_to_b;
+        jmptable[0x4a] = &cf.load_d_to_c;
         jmptable[0x4d] = &cf.load_l_to_c;
         jmptable[0x4f] = &cf.load_a_to_c;
         jmptable[0x50] = &cf.load_b_to_d;
+        jmptable[0x51] = &cf.load_c_to_d;
         jmptable[0x54] = &cf.load_h_to_d;
         jmptable[0x57] = &cf.load_a_to_d;
         jmptable[0x5D] = &cf.load_l_to_e;
         jmptable[0x5F] = &cf.load_a_to_e;
+        jmptable[0x62] = &cf.load_d_to_h;
         jmptable[0x67] = &cf.load_a_to_h;
         jmptable[0x6b] = &cf.load_e_to_l;
         jmptable[0x6f] = &cf.load_a_to_l;
@@ -676,6 +683,7 @@ pub const Cpu = struct {
         jmptable[0x7c] = &cf.load_h_to_a;
         jmptable[0x7d] = &cf.load_l_to_a;
         jmptable[0x7e] = &cf.load_hl_indirect_to_a;
+        jmptable[0x81] = &cf.add_a_to_c;
         jmptable[0x83] = &cf.add_a_to_e;
         jmptable[0x85] = &cf.add_a_to_l;
         jmptable[0x86] = &cf.add_a_to_hl_indirect;
@@ -689,11 +697,13 @@ pub const Cpu = struct {
         jmptable[0xB0] = &cf.or_b_with_a;
         jmptable[0xB1] = &cf.or_c_with_a;
         jmptable[0xB3] = &cf.or_e_with_a;
+        jmptable[0xB9] = &cf.compare_c_to_a;
         jmptable[0xBE] = &cf.compare_indirectHL_to_a;
         jmptable[0xC1] = &cf.pop_bc;
         jmptable[0xC0] = &cf.return_if_not_zero;
         jmptable[0xC3] = &cf.jmp;
         jmptable[0xC5] = &cf.push_bc;
+        jmptable[0xC6] = &cf.add_a_d8;
         jmptable[0xC8] = &cf.return_from_call_condiional_on_z;
         jmptable[0xC9] = &cf.return_from_call;
         jmptable[0xCA] = &cf.jump_if_zero_a16;
@@ -736,10 +746,17 @@ pub const Cpu = struct {
         extended_jmptable[0x47] = &cf.copy_compl_abit0_to_z;
         extended_jmptable[0x4f] = &cf.copy_compl_abit1_to_z;
         extended_jmptable[0x57] = &cf.copy_compl_abit2_to_z;
+        extended_jmptable[0x6f] = &cf.copy_compl_abit5_to_z;
         extended_jmptable[0x77] = &cf.copy_compl_abit6_to_z;
         extended_jmptable[0x7c] = &cf.copy_compl_hbit7_to_z;
         extended_jmptable[0x7f] = &cf.copy_compl_abit7_to_z;
         extended_jmptable[0x87] = &cf.reset_a_bit0;
+        extended_jmptable[0x8F] = &cf.reset_a_bit1;
+        extended_jmptable[0x97] = &cf.reset_a_bit2;
+        extended_jmptable[0xAE] = &cf.reset_indirecthl_bit5;
+        extended_jmptable[0xAF] = &cf.reset_a_bit5;
+        extended_jmptable[0xD6] = &cf.set_indirect_hl_bit2;
+        extended_jmptable[0xDE] = &cf.set_indirect_hl_bit3;
         extended_jmptable[0xFF] = &cf.set_a_bit7;
 
         //const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
@@ -999,7 +1016,9 @@ pub const Cpu = struct {
                 //0x60a7,
                 //0x6155,
                 //0x0171,
-                0x1dd1,
+                //0x1dd1,
+                //0x4e4b,
+                0x59d8,
             };
             //const watched_pcs = [_]u16{};
             //const watched_pc = 0xFFFF;
