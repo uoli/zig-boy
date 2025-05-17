@@ -398,9 +398,9 @@ const Bus = struct {
             },
             0x8000...0x9FFF => { //vram
                 //TODO: do we need to split ram from vram?
-                if (address >= 0x8000 and address <= 0x97FF and self.cpu.disable_boot_rom == 1 and value != 0) {
-                    @breakpoint();
-                }
+                //if (address >= 0x8000 and address <= 0x97FF and self.cpu.disable_boot_rom == 1 and value != 0) {
+                //    @breakpoint();
+                //}
                 self.ram[address] = value;
             },
             0xC000...0xCFFF => { //wram bank 0
@@ -533,7 +533,7 @@ pub const opFunc = *const fn (*Cpu) anyerror!mcycles;
 fn init_tables(opcodetable: *[256]OpCodeInfo, jmptable: *[256]opFunc) void {
     const cf = @import("cpu_functions.zig");
     const err: OpCodeInfo = OpCodeInfo.init(0x00, "EXT ERR", .None);
-    for (0..255) |i| {
+    for (0..255 + 1) |i| {
         opcodetable[i] = err;
         jmptable[i] = &cf.NotImplemented;
     }
@@ -549,6 +549,7 @@ pub const Cpu = struct {
     r: Registers,
     sp: u16,
     pc: u16,
+    halted: bool,
     interrupt: struct { enabled: bool, interrupt_flag: Interrupts, interrupt_enabled: Interrupts },
     enable_trace: bool,
     disable_boot_rom: u8,
@@ -620,6 +621,7 @@ pub const Cpu = struct {
         jmptable[0x0e] = &cf.load_d8_to_c;
         jmptable[0x1b] = &cf.dec_de;
         jmptable[0x11] = &cf.load_d16_to_de;
+        jmptable[0x12] = &cf.store_a_to_indirectDE;
         jmptable[0x13] = &cf.inc_de;
         jmptable[0x15] = &cf.dec_d;
         jmptable[0x16] = &cf.load_d8_to_d;
@@ -637,6 +639,7 @@ pub const Cpu = struct {
         jmptable[0x26] = &cf.load_d8_to_h;
         jmptable[0x28] = &cf.jmp_if_zero;
         jmptable[0x2a] = &cf.load_HL_indirect_inc_to_a;
+        jmptable[0x2c] = &cf.inc_l;
         jmptable[0x2e] = &cf.load_d8_to_l;
         jmptable[0x2f] = &cf.compl_a;
         jmptable[0x30] = &cf.jump_not_carry_s8;
@@ -645,10 +648,13 @@ pub const Cpu = struct {
         jmptable[0x36] = &cf.store_d8_to_indirectHL;
         jmptable[0x37] = &cf.set_carry_flag;
         jmptable[0x3a] = &cf.load_indirectHL_dec_to_a;
+        jmptable[0x3c] = &cf.inc_a;
         jmptable[0x3d] = &cf.dec_a;
         jmptable[0x3e] = &cf.load_d8_to_a;
         jmptable[0x42] = &cf.load_d_to_b;
+        jmptable[0x44] = &cf.load_h_to_b;
         jmptable[0x47] = &cf.load_a_to_b;
+        jmptable[0x4d] = &cf.load_l_to_c;
         jmptable[0x4f] = &cf.load_a_to_c;
         jmptable[0x50] = &cf.load_b_to_d;
         jmptable[0x54] = &cf.load_h_to_d;
@@ -659,6 +665,9 @@ pub const Cpu = struct {
         jmptable[0x6b] = &cf.load_e_to_l;
         jmptable[0x6f] = &cf.load_a_to_l;
         jmptable[0x71] = &cf.store_c_to_indirectHL;
+        jmptable[0x72] = &cf.store_d_to_indirectHL;
+        jmptable[0x73] = &cf.store_e_to_indirectHL;
+        jmptable[0x76] = &cf.halt;
         jmptable[0x77] = &cf.store_a_to_indirectHL;
         jmptable[0x78] = &cf.load_b_to_a;
         jmptable[0x79] = &cf.load_c_to_a;
@@ -668,6 +677,7 @@ pub const Cpu = struct {
         jmptable[0x7d] = &cf.load_l_to_a;
         jmptable[0x7e] = &cf.load_hl_indirect_to_a;
         jmptable[0x83] = &cf.add_a_to_e;
+        jmptable[0x85] = &cf.add_a_to_l;
         jmptable[0x86] = &cf.add_a_to_hl_indirect;
         jmptable[0x87] = &cf.add_a_to_a;
         jmptable[0x88] = &cf.add_b_cy_a_to_a;
@@ -676,6 +686,7 @@ pub const Cpu = struct {
         jmptable[0x98] = &cf.subtract_a_b_cf;
         jmptable[0xA7] = &cf.and_a_with_a;
         jmptable[0xAF] = &cf.xor_a_with_a;
+        jmptable[0xB0] = &cf.or_b_with_a;
         jmptable[0xB1] = &cf.or_c_with_a;
         jmptable[0xB3] = &cf.or_e_with_a;
         jmptable[0xBE] = &cf.compare_indirectHL_to_a;
@@ -689,8 +700,10 @@ pub const Cpu = struct {
         //jmptable[0xCB] = &cf."tended", Single16Arg, &cb_extended};
         jmptable[0xCC] = &cf.call_if_zero;
         jmptable[0xCD] = &cf.call16;
+        jmptable[0xD0] = &cf.retun_if_no_carry;
         jmptable[0xD1] = &cf.pop_de;
         jmptable[0xD5] = &cf.push_de;
+        jmptable[0xD6] = &cf.sub_d8;
         jmptable[0xD9] = &cf.return_enable_interupt;
         jmptable[0xE0] = &cf.load_a_to_indirect8;
         jmptable[0xE1] = &cf.pop_to_HL;
@@ -703,6 +716,8 @@ pub const Cpu = struct {
         jmptable[0xF1] = &cf.pop_af;
         jmptable[0xF3] = &cf.disable_interrupts;
         jmptable[0xF5] = &cf.push_af;
+        jmptable[0xF8] = &cf.add_sp_s8_to_hl;
+        jmptable[0xF9] = &cf.load_hl_to_sp;
         jmptable[0xFE] = &cf.compare_immediate8_ra;
         jmptable[0xFA] = &cf.load_indirect16_to_a;
         jmptable[0xFb] = &cf.enable_interrupts;
@@ -716,11 +731,16 @@ pub const Cpu = struct {
         extended_jmptable[0x11] = &cf.rotate_left_c;
         extended_jmptable[0x1A] = &cf.rotate_right_d;
         extended_jmptable[0x20] = &cf.shift_left_B;
+        extended_jmptable[0x37] = &cf.swap_a;
         extended_jmptable[0x42] = &cf.copy_compl_dbit0_to_z;
         extended_jmptable[0x47] = &cf.copy_compl_abit0_to_z;
         extended_jmptable[0x4f] = &cf.copy_compl_abit1_to_z;
+        extended_jmptable[0x57] = &cf.copy_compl_abit2_to_z;
+        extended_jmptable[0x77] = &cf.copy_compl_abit6_to_z;
         extended_jmptable[0x7c] = &cf.copy_compl_hbit7_to_z;
+        extended_jmptable[0x7f] = &cf.copy_compl_abit7_to_z;
         extended_jmptable[0x87] = &cf.reset_a_bit0;
+        extended_jmptable[0xFF] = &cf.set_a_bit7;
 
         //const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
         //const extended_opcodetable, const extended_jmptable = process_opcodetable(&extended_opcodesInfo, &extended_opcodesFunc);
@@ -733,6 +753,7 @@ pub const Cpu = struct {
             .r = Registers.init(),
             .sp = 0xFFFE,
             .pc = 0x0,
+            .halted = false,
             .enable_trace = false,
             .opcodetable = opcodetable,
             .jmptable = jmptable,
@@ -888,7 +909,7 @@ pub const Cpu = struct {
 
     fn handle_dma(self: *Cpu, cycles_elapsed: mcycles) void {
         if (self.dma.requested == false) return;
-        for (0x00..0x9F) |value| {
+        for (0x00..0x9F + 1) |value| {
             const value16: u16 = @intCast(value);
             const source: u16 = self.dma.source + value16;
             const dest: u16 = 0xFE00 + value16;
@@ -977,7 +998,8 @@ pub const Cpu = struct {
                 //0x0100,
                 //0x60a7,
                 //0x6155,
-                0x0171,
+                //0x0171,
+                0x1dd1,
             };
             //const watched_pcs = [_]u16{};
             //const watched_pc = 0xFFFF;
@@ -997,7 +1019,8 @@ pub const Cpu = struct {
             if (extended_instruction == 124 and self.disable_boot_rom == 1) {
                 //@breakpoint();
             }
-            cycles = self.extended_jmptable[extended_instruction](self) catch {
+            const func = self.extended_jmptable[extended_instruction];
+            cycles = func(self) catch {
                 std.debug.panic("Error decoding and executing ext opcode 0xCB, 0x{x:02}\n", .{extended_instruction});
             };
         } else {
@@ -1019,6 +1042,8 @@ pub const Cpu = struct {
     pub fn step(self: *Cpu) mcycles {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
+
+        if (self.halted) return 1;
 
         var clocks = execute_interrupts_if_enabled(self);
         clocks += self.decode_and_execute();
@@ -1058,6 +1083,10 @@ pub const Cpu = struct {
         const current_interrupts: u8 = @bitCast(self.interrupt.interrupt_flag);
         const new_bitmask = interrupt_bit_mask | current_interrupts;
         self.interrupt.interrupt_flag = @bitCast(new_bitmask);
+
+        if (@as(u8, @bitCast(self.interrupt.interrupt_enabled)) & interrupt_bit_mask != 0) {
+            self.halted = false;
+        }
     }
 
     fn execute_interrupts_if_enabled(self: *Cpu) mcycles {
