@@ -109,7 +109,7 @@ pub fn main() !void {
         const target_frame_time_ms = 16;
         const delta_time_ms = (try std.time.Instant.now()).since(prev_time) / std.time.ns_per_ms;
         if (delta_time_ms < target_frame_time_ms) {
-            //c.SDL_Delay(target_frame_time_ms - @as(u32, @intCast(delta_time_ms)));
+            c.SDL_Delay(target_frame_time_ms - @as(u32, @intCast(delta_time_ms)));
         }
     }
 }
@@ -158,24 +158,34 @@ const Emulator = struct {
 
         const boot_rom = try load_rom(boot_location, 256, allocator);
         const cartridge_rom = try load_rom(rom_location, buffer_size, allocator);
-        var cartridge = Cartridge.init(cartridge_rom[0..]);
+
+        const cartridge = try allocator.create(Cartridge);
+        cartridge.* = Cartridge.init(cartridge_rom[0..]);
 
         //var device_rom = [];
 
-        var ram: [8 << 10 << 10]u8 = undefined;
-        @memset(&ram, 0);
+        //var ram: [8 << 10 << 10]u8 = undefined;
+        var ram = try allocator.alloc(u8, 8 << 10 << 10);
 
-        var bus = Bus.init(ram[0..ram.len], &cartridge);
-        var gpu = Gpu.init(&bus, ram[0..ram.len]);
-        var cpu = Cpu.init(boot_rom, &bus);
-        bus.connectGpu(&gpu);
-        bus.connectCpu(&cpu);
+        @memset(ram, 0);
+
+        var bus = try allocator.create(Bus);
+        bus.* = Bus.init(ram[0..ram.len], cartridge);
+
+        const gpu = try allocator.create(Gpu);
+        gpu.* = Gpu.init(bus, ram[0..ram.len]);
+
+        const cpu = try allocator.create(Cpu);
+        cpu.* = Cpu.init(boot_rom, bus);
+
+        bus.connectGpu(gpu);
+        bus.connectCpu(cpu);
 
         return Emulator{
             //.gpa = gpa,
             .allocator = allocator,
-            .cpu = &cpu,
-            .gpu = &gpu,
+            .cpu = cpu,
+            .gpu = gpu,
             .boot_rom = boot_rom,
             .cartridge_rom = cartridge_rom,
         };
@@ -504,25 +514,13 @@ const Interrupts = packed struct {
 pub const mcycles = usize;
 pub const opFunc = *const fn (*Cpu) anyerror!mcycles;
 
-fn process_opcodetable(table: []const OpCodeInfo, func_table: []const struct { u8, opFunc }) struct { [256]OpCodeInfo, [256]opFunc } {
+fn init_tables(opcodetable: *[256]OpCodeInfo, jmptable: *[256]opFunc) void {
     const cf = @import("cpu_functions.zig");
     const err: OpCodeInfo = OpCodeInfo.init(0x00, "EXT ERR", .None);
-    var opcodetable: [256]OpCodeInfo = undefined;
-    var jmptable: [256]opFunc = undefined;
     for (0..255) |i| {
         opcodetable[i] = err;
         jmptable[i] = &cf.NotImplemented;
     }
-
-    for (table) |value| {
-        opcodetable[value.code] = value;
-    }
-
-    for (func_table) |value| {
-        jmptable[value[0]] = value[1];
-    }
-
-    return .{ opcodetable, jmptable };
 }
 
 const JoypadSelectState = enum(u1) { Selected = 0, NotSelected = 1 };
@@ -576,117 +574,119 @@ pub const Cpu = struct {
     extended_jmptable: [256]opFunc,
 
     pub fn init(boot_rom: []const u8, bus: *Bus) Cpu {
-        var opcodesInfo: [256]OpCodeInfo = undefined;
-        cpu_opcode_matadata_gen.get_opcodes_table(&opcodesInfo);
+        var opcodetable: [256]OpCodeInfo = undefined;
+        var jmptable: [256]opFunc = undefined;
+
+        init_tables(&opcodetable, &jmptable);
+        cpu_opcode_matadata_gen.get_opcodes_table(&opcodetable);
         const cf = @import("cpu_functions.zig");
 
-        const opcodesFunc = [_]struct { u8, opFunc }{
-            .{ 0x00, &cf.nop },
-            .{ 0x01, &cf.load_d16_to_bc },
-            .{ 0x02, &cf.load_bc_indirect_to_a },
-            .{ 0x04, &cf.inc_b },
-            .{ 0x05, &cf.dec_b },
-            .{ 0x06, &cf.load_d8_to_b },
-            .{ 0x0b, &cf.dec_bc },
-            .{ 0x0c, &cf.inc_c },
-            .{ 0x0d, &cf.dec_c },
-            .{ 0x0e, &cf.load_d8_to_c },
-            .{ 0x1b, &cf.dec_de },
-            .{ 0x11, &cf.load_d16_to_de },
-            .{ 0x13, &cf.inc_de },
-            .{ 0x15, &cf.dec_d },
-            .{ 0x16, &cf.load_d8_to_d },
-            .{ 0x17, &cf.rotate_left_a },
-            .{ 0x18, &cf.jmp_s8 },
-            .{ 0x19, &cf.add_de_to_hl },
-            .{ 0x1A, &cf.load_indirectDE_to_a },
-            .{ 0x1D, &cf.dec_e },
-            .{ 0x1E, &cf.load_d8_to_e },
-            .{ 0x20, &cf.jmp_nz_s8 },
-            .{ 0x21, &cf.load_d16_to_HL },
-            .{ 0x22, &cf.store_a_to_IndirectHL_inc },
-            .{ 0x23, &cf.inc_HL },
-            .{ 0x24, &cf.inc_H },
-            .{ 0x26, &cf.load_d8_to_h },
-            .{ 0x28, &cf.jmp_if_zero },
-            .{ 0x2a, &cf.load_HL_indirect_inc_to_a },
-            .{ 0x2e, &cf.load_d8_to_l },
-            .{ 0x30, &cf.jump_not_carry_s8 },
-            .{ 0x31, &cf.load_d16_to_sp },
-            .{ 0x32, &cf.store_a_to_indirectHL_dec },
-            .{ 0x36, &cf.store_d8_to_indirectHL },
-            .{ 0x37, &cf.set_carry_flag },
-            .{ 0x3a, &cf.load_indirectHL_dec_to_a },
-            .{ 0x3d, &cf.dec_a },
-            .{ 0x3e, &cf.load_d8_to_a },
-            .{ 0x42, &cf.load_d_to_b },
-            .{ 0x47, &cf.load_a_to_b },
-            .{ 0x4f, &cf.load_a_to_c },
-            .{ 0x50, &cf.load_b_to_d },
-            .{ 0x54, &cf.load_h_to_d },
-            .{ 0x57, &cf.load_a_to_d },
-            .{ 0x5D, &cf.load_l_to_e },
-            .{ 0x5F, &cf.load_a_to_e },
-            .{ 0x67, &cf.load_a_to_h },
-            .{ 0x6b, &cf.load_e_to_l },
-            .{ 0x6f, &cf.load_a_to_l },
-            .{ 0x71, &cf.store_c_to_indirectHL },
-            .{ 0x77, &cf.store_a_to_indirectHL },
-            .{ 0x78, &cf.load_b_to_a },
-            .{ 0x7a, &cf.load_d_to_a },
-            .{ 0x7b, &cf.load_e_to_a },
-            .{ 0x7c, &cf.load_h_to_a },
-            .{ 0x7d, &cf.load_l_to_a },
-            .{ 0x7e, &cf.load_hl_indirect_to_a },
-            .{ 0x83, &cf.add_a_to_e },
-            .{ 0x86, &cf.add_a_to_hl_indirect },
-            .{ 0x87, &cf.add_a_to_a },
-            .{ 0x90, &cf.subtract_b_from_a },
-            .{ 0x95, &cf.subtract_l_from_a },
-            .{ 0xA7, &cf.and_a_with_a },
-            .{ 0xAF, &cf.xor_a_with_a },
-            .{ 0xB1, &cf.or_c_with_a },
-            .{ 0xB3, &cf.or_e_with_a },
-            .{ 0xBE, &cf.compare_indirectHL_to_a },
-            .{ 0xC1, &cf.pop_bc },
-            .{ 0xC3, &cf.jmp },
-            .{ 0xC5, &cf.push_bc },
-            .{ 0xC8, &cf.return_from_call_condiional_on_z },
-            .{ 0xC9, &cf.return_from_call },
-            .{ 0xCA, &cf.jump_if_zero_a16 },
-            //.{0xCB, &cf."Xtended", Single16Arg, &cb_extended},
-            .{ 0xCD, &cf.call16 },
-            .{ 0xD1, &cf.pop_de },
-            .{ 0xD5, &cf.push_de },
-            .{ 0xE0, &cf.load_a_to_indirect8 },
-            .{ 0xE1, &cf.pop_to_HL },
-            .{ 0xE2, &cf.store_a_to_indirect_c },
-            .{ 0xE5, &cf.push_hl },
-            .{ 0xE6, &cf.and_d8_to_a },
-            .{ 0xE9, &cf.jmp_hl },
-            .{ 0xEA, &cf.load_a_to_indirect16 },
-            .{ 0xF0, &cf.load_indirect8_to_a },
-            .{ 0xF3, &cf.disable_interrupts },
-            .{ 0xF5, &cf.push_af },
-            .{ 0xFE, &cf.compare_immediate8_ra },
-            .{ 0xFA, &cf.load_indirect16_to_a },
-            .{ 0xFb, &cf.enable_interrupts },
-        };
+        jmptable[0x00] = &cf.nop;
+        jmptable[0x01] = &cf.load_d16_to_bc;
+        jmptable[0x02] = &cf.load_bc_indirect_to_a;
+        jmptable[0x04] = &cf.inc_b;
+        jmptable[0x05] = &cf.dec_b;
+        jmptable[0x06] = &cf.load_d8_to_b;
+        jmptable[0x0b] = &cf.dec_bc;
+        jmptable[0x0c] = &cf.inc_c;
+        jmptable[0x0d] = &cf.dec_c;
+        jmptable[0x0e] = &cf.load_d8_to_c;
+        jmptable[0x1b] = &cf.dec_de;
+        jmptable[0x11] = &cf.load_d16_to_de;
+        jmptable[0x13] = &cf.inc_de;
+        jmptable[0x15] = &cf.dec_d;
+        jmptable[0x16] = &cf.load_d8_to_d;
+        jmptable[0x17] = &cf.rotate_left_a;
+        jmptable[0x18] = &cf.jmp_s8;
+        jmptable[0x19] = &cf.add_de_to_hl;
+        jmptable[0x1A] = &cf.load_indirectDE_to_a;
+        jmptable[0x1D] = &cf.dec_e;
+        jmptable[0x1E] = &cf.load_d8_to_e;
+        jmptable[0x20] = &cf.jmp_nz_s8;
+        jmptable[0x21] = &cf.load_d16_to_HL;
+        jmptable[0x22] = &cf.store_a_to_IndirectHL_inc;
+        jmptable[0x23] = &cf.inc_HL;
+        jmptable[0x24] = &cf.inc_H;
+        jmptable[0x26] = &cf.load_d8_to_h;
+        jmptable[0x28] = &cf.jmp_if_zero;
+        jmptable[0x2a] = &cf.load_HL_indirect_inc_to_a;
+        jmptable[0x2e] = &cf.load_d8_to_l;
+        jmptable[0x30] = &cf.jump_not_carry_s8;
+        jmptable[0x31] = &cf.load_d16_to_sp;
+        jmptable[0x32] = &cf.store_a_to_indirectHL_dec;
+        jmptable[0x36] = &cf.store_d8_to_indirectHL;
+        jmptable[0x37] = &cf.set_carry_flag;
+        jmptable[0x3a] = &cf.load_indirectHL_dec_to_a;
+        jmptable[0x3d] = &cf.dec_a;
+        jmptable[0x3e] = &cf.load_d8_to_a;
+        jmptable[0x42] = &cf.load_d_to_b;
+        jmptable[0x47] = &cf.load_a_to_b;
+        jmptable[0x4f] = &cf.load_a_to_c;
+        jmptable[0x50] = &cf.load_b_to_d;
+        jmptable[0x54] = &cf.load_h_to_d;
+        jmptable[0x57] = &cf.load_a_to_d;
+        jmptable[0x5D] = &cf.load_l_to_e;
+        jmptable[0x5F] = &cf.load_a_to_e;
+        jmptable[0x67] = &cf.load_a_to_h;
+        jmptable[0x6b] = &cf.load_e_to_l;
+        jmptable[0x6f] = &cf.load_a_to_l;
+        jmptable[0x71] = &cf.store_c_to_indirectHL;
+        jmptable[0x77] = &cf.store_a_to_indirectHL;
+        jmptable[0x78] = &cf.load_b_to_a;
+        jmptable[0x7a] = &cf.load_d_to_a;
+        jmptable[0x7b] = &cf.load_e_to_a;
+        jmptable[0x7c] = &cf.load_h_to_a;
+        jmptable[0x7d] = &cf.load_l_to_a;
+        jmptable[0x7e] = &cf.load_hl_indirect_to_a;
+        jmptable[0x83] = &cf.add_a_to_e;
+        jmptable[0x86] = &cf.add_a_to_hl_indirect;
+        jmptable[0x87] = &cf.add_a_to_a;
+        jmptable[0x90] = &cf.subtract_b_from_a;
+        jmptable[0x95] = &cf.subtract_l_from_a;
+        jmptable[0xA7] = &cf.and_a_with_a;
+        jmptable[0xAF] = &cf.xor_a_with_a;
+        jmptable[0xB1] = &cf.or_c_with_a;
+        jmptable[0xB3] = &cf.or_e_with_a;
+        jmptable[0xBE] = &cf.compare_indirectHL_to_a;
+        jmptable[0xC1] = &cf.pop_bc;
+        jmptable[0xC3] = &cf.jmp;
+        jmptable[0xC5] = &cf.push_bc;
+        jmptable[0xC8] = &cf.return_from_call_condiional_on_z;
+        jmptable[0xC9] = &cf.return_from_call;
+        jmptable[0xCA] = &cf.jump_if_zero_a16;
+        //jmptable[0xCB] = &cf."tended", Single16Arg, &cb_extended};
+        jmptable[0xCD] = &cf.call16;
+        jmptable[0xD1] = &cf.pop_de;
+        jmptable[0xD5] = &cf.push_de;
+        jmptable[0xE0] = &cf.load_a_to_indirect8;
+        jmptable[0xE1] = &cf.pop_to_HL;
+        jmptable[0xE2] = &cf.store_a_to_indirect_c;
+        jmptable[0xE5] = &cf.push_hl;
+        jmptable[0xE6] = &cf.and_d8_to_a;
+        jmptable[0xE9] = &cf.jmp_hl;
+        jmptable[0xEA] = &cf.load_a_to_indirect16;
+        jmptable[0xF0] = &cf.load_indirect8_to_a;
+        jmptable[0xF3] = &cf.disable_interrupts;
+        jmptable[0xF5] = &cf.push_af;
+        jmptable[0xFE] = &cf.compare_immediate8_ra;
+        jmptable[0xFA] = &cf.load_indirect16_to_a;
+        jmptable[0xFb] = &cf.enable_interrupts;
 
-        var extended_opcodesInfo: [256]OpCodeInfo = undefined;
-        cpu_opcode_matadata_gen.get_extopcodes_table(&extended_opcodesInfo);
+        var extended_opcodetable: [256]OpCodeInfo = undefined;
+        var extended_jmptable: [256]opFunc = undefined;
+        init_tables(&extended_opcodetable, &extended_jmptable);
 
-        const extended_opcodesFunc = [_]struct { u8, opFunc }{
-            .{ 0x11, &cf.rotate_left_c },
-            .{ 0x1A, &cf.rotate_right_d },
-            .{ 0x20, &cf.shift_left_B },
-            .{ 0x42, &cf.copy_compl_bit0_to_d },
-            .{ 0x7c, &cf.copy_compl_bit7_to_z },
-            .{ 0x87, &cf.reset_a_bit0 },
-        };
+        cpu_opcode_matadata_gen.get_extopcodes_table(&extended_opcodetable);
 
-        const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
-        const extended_opcodetable, const extended_jmptable = process_opcodetable(&extended_opcodesInfo, &extended_opcodesFunc);
+        extended_jmptable[0x11] = &cf.rotate_left_c;
+        extended_jmptable[0x1A] = &cf.rotate_right_d;
+        extended_jmptable[0x20] = &cf.shift_left_B;
+        extended_jmptable[0x42] = &cf.copy_compl_bit0_to_d;
+        extended_jmptable[0x7c] = &cf.copy_compl_bit7_to_z;
+        extended_jmptable[0x87] = &cf.reset_a_bit0;
+
+        //const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
+        //const extended_opcodetable, const extended_jmptable = process_opcodetable(&extended_opcodesInfo, &extended_opcodesFunc);
 
         return Cpu{
             .boot_rom = boot_rom,
@@ -697,9 +697,9 @@ pub const Cpu = struct {
             .sp = 0xFFFE,
             .pc = 0x0,
             .enable_trace = false,
-            .opcodetable = opcodetable,
+            .opcodetable = undefined,
             .jmptable = jmptable,
-            .extended_opcodetable = extended_opcodetable,
+            .extended_opcodetable = undefined,
             .extended_jmptable = extended_jmptable,
             .interrupt = .{
                 .enabled = true,
@@ -940,8 +940,10 @@ pub const Cpu = struct {
         };
 
         for (bitMaskToInterrupt) |mask| {
+            const enabled_interrupts_bitfield: u8 = @bitCast(self.interrupt.interrupt_enabled);
             const current_interrupts_bitfield: u8 = @bitCast(self.interrupt.interrupt_flag);
-            if (current_interrupts_bitfield & mask[0] != 0) {
+            const interrupts_to_execute_bitfield: u8 = enabled_interrupts_bitfield & current_interrupts_bitfield;
+            if (interrupts_to_execute_bitfield & mask[0] != 0) {
                 return self.execute_interrupt(mask[1]);
             }
         }
