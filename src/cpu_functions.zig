@@ -67,6 +67,16 @@ fn rotate_r(cpu: *Cpu, data: *u8) void {
     cpu.r.s.f.c = carry;
 }
 
+pub fn add16(cpu: *Cpu, rega: *u16, regb: *u16) !mcycles {
+    rega.*, const overflow = @addWithOverflow(rega.*, regb.*);
+    const calcH: u16 = (rega.* & 0b111111111111) + (regb.* & 0b111111111111);
+    cpu.r.s.f.z = if (rega.* == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = if (calcH > 0b111111111111) 1 else 0;
+    cpu.r.s.f.c = overflow;
+    return 2;
+}
+
 pub fn or_r1_with_r2(cpu: *Cpu, r1: *u8, r2: *u8) !mcycles {
     r2.* |= r1.*;
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
@@ -96,6 +106,10 @@ pub fn dec_bc(cpu: *Cpu) !mcycles {
 pub fn load_d8_to_b(cpu: *Cpu) !mcycles {
     cpu.r.s.b = cpu.fetch();
     return 2;
+}
+
+pub fn add_HL_BC(cpu: *Cpu) !mcycles {
+    return add16(cpu, &cpu.r.f.HL, &cpu.r.f.BC);
 }
 
 pub fn inc_c(cpu: *Cpu) !mcycles {
@@ -208,6 +222,11 @@ pub fn store_a_to_indirectHL(cpu: *Cpu) !mcycles {
 
 pub fn load_b_to_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a = cpu.r.s.b;
+    return 1;
+}
+
+pub fn load_c_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.r.s.c;
     return 1;
 }
 
@@ -532,12 +551,30 @@ pub fn load_d8_to_l(cpu: *Cpu) !mcycles {
     return 2;
 }
 
+pub fn compl_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = ~cpu.r.s.a;
+    cpu.r.s.f.n = 1;
+    cpu.r.s.f.h = 1;
+    return 1;
+}
+
 pub fn jump_not_carry_s8(cpu: *Cpu) !mcycles {
     const dest = cpu.fetch();
     var timing: mcycles = 2;
     if (cpu.r.s.f.c == 0) {
         cpu.pc = add_u8_as_signed_to_u16(dest, cpu.pc);
         timing += 1;
+    }
+    return timing;
+}
+
+pub fn call_if_zero(cpu: *Cpu) !mcycles {
+    const dest = cpu.fetch16();
+    var timing: mcycles = 3;
+    if (cpu.r.s.f.z == 1) {
+        cpu.push16(cpu.pc);
+        cpu.pc = dest;
+        timing += 3;
     }
     return timing;
 }
@@ -556,6 +593,12 @@ pub fn pop_de(cpu: *Cpu) !mcycles {
 
 pub fn push_de(cpu: *Cpu) !mcycles {
     cpu.push16(cpu.r.f.DE);
+    return 4;
+}
+
+pub fn return_enable_interupt(cpu: *Cpu) !mcycles {
+    _ = try return_from_call(cpu);
+    _ = try enable_interrupts(cpu);
     return 4;
 }
 
@@ -608,14 +651,27 @@ pub fn push_af(cpu: *Cpu) !mcycles {
     return 4;
 }
 
+pub fn pop_af(cpu: *Cpu) !mcycles {
+    cpu.r.f.AF = cpu.pop16();
+    return 3;
+}
+
 pub fn disable_interrupts(cpu: *Cpu) !mcycles {
     cpu.interrupt.enabled = false;
     return 1;
 }
 
 pub fn enable_interrupts(cpu: *Cpu) !mcycles {
+    //TODO: this needs to be delayed by 1 instruction
     cpu.interrupt.enabled = true;
     return 1;
+}
+
+fn copy_compl_rbitN_to_z(cpu: *Cpu, reg: u8, comptime N: u8) !mcycles {
+    cpu.r.s.f.z = if ((reg >> N) & 0b1 != 1) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 1;
+    return 2;
 }
 
 pub fn rotate_left_c(cpu: *Cpu) !mcycles {
@@ -637,18 +693,20 @@ pub fn shift_left_B(cpu: *Cpu) !mcycles {
     return 2;
 }
 
-pub fn copy_compl_bit0_to_d(cpu: *Cpu) !mcycles {
-    cpu.r.s.f.z = if ((cpu.r.s.b >> 0) & 0b1 != 1) 1 else 0;
-    cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = 1;
-    return 2;
+pub fn copy_compl_dbit0_to_z(cpu: *Cpu) !mcycles {
+    return copy_compl_rbitN_to_z(cpu, cpu.r.s.d, 0);
 }
 
-pub fn copy_compl_bit7_to_z(cpu: *Cpu) !mcycles {
-    cpu.r.s.f.z = if ((cpu.r.s.h >> 7) != 1) 1 else 0;
-    cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = 1;
-    return 2;
+pub fn copy_compl_abit0_to_z(cpu: *Cpu) !mcycles {
+    return copy_compl_rbitN_to_z(cpu, cpu.r.s.a, 0);
+}
+
+pub fn copy_compl_abit1_to_z(cpu: *Cpu) !mcycles {
+    return copy_compl_rbitN_to_z(cpu, cpu.r.s.a, 1);
+}
+
+pub fn copy_compl_hbit7_to_z(cpu: *Cpu) !mcycles {
+    return copy_compl_rbitN_to_z(cpu, cpu.r.s.h, 7);
 }
 
 pub fn reset_a_bit0(cpu: *Cpu) !mcycles {

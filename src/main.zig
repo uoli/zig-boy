@@ -398,6 +398,9 @@ const Bus = struct {
             },
             0x8000...0x9FFF => { //vram
                 //TODO: do we need to split ram from vram?
+                if (address >= 0x8000 and address <= 0x97FF and self.cpu.disable_boot_rom == 1 and value != 0) {
+                    @breakpoint();
+                }
                 self.ram[address] = value;
             },
             0xC000...0xCFFF => { //wram bank 0
@@ -414,7 +417,13 @@ const Bus = struct {
                 self.ram[address] = value;
             },
             0xFF40 => {
+                const intialStatus = self.gpu.lcd_control.lcd_display_enable;
                 self.gpu.lcd_control = @bitCast(value);
+                if (intialStatus != self.gpu.lcd_control.lcd_display_enable and self.gpu.lcd_control.lcd_display_enable) {
+                    self.gpu.ly = 0;
+                    self.gpu.mode = 0;
+                    self.gpu.mode_clocks = 0;
+                }
             },
             0xFF41 => {
                 self.gpu.lcd_status = @bitCast(value);
@@ -440,7 +449,9 @@ const Bus = struct {
             0xFF4B => {
                 self.gpu.window_x = value;
             },
-
+            0xFEA0...0xFEFF => { //Not usable
+                std.debug.assert(false);
+            },
             0xFF80...0xFFFE => { // HRAM
                 self.ram[address] = value;
             },
@@ -602,6 +613,7 @@ pub const Cpu = struct {
         jmptable[0x04] = &cf.inc_b;
         jmptable[0x05] = &cf.dec_b;
         jmptable[0x06] = &cf.load_d8_to_b;
+        jmptable[0x09] = &cf.add_HL_BC;
         jmptable[0x0b] = &cf.dec_bc;
         jmptable[0x0c] = &cf.inc_c;
         jmptable[0x0d] = &cf.dec_c;
@@ -626,6 +638,7 @@ pub const Cpu = struct {
         jmptable[0x28] = &cf.jmp_if_zero;
         jmptable[0x2a] = &cf.load_HL_indirect_inc_to_a;
         jmptable[0x2e] = &cf.load_d8_to_l;
+        jmptable[0x2f] = &cf.compl_a;
         jmptable[0x30] = &cf.jump_not_carry_s8;
         jmptable[0x31] = &cf.load_d16_to_sp;
         jmptable[0x32] = &cf.store_a_to_indirectHL_dec;
@@ -648,6 +661,7 @@ pub const Cpu = struct {
         jmptable[0x71] = &cf.store_c_to_indirectHL;
         jmptable[0x77] = &cf.store_a_to_indirectHL;
         jmptable[0x78] = &cf.load_b_to_a;
+        jmptable[0x79] = &cf.load_c_to_a;
         jmptable[0x7a] = &cf.load_d_to_a;
         jmptable[0x7b] = &cf.load_e_to_a;
         jmptable[0x7c] = &cf.load_h_to_a;
@@ -673,9 +687,11 @@ pub const Cpu = struct {
         jmptable[0xC9] = &cf.return_from_call;
         jmptable[0xCA] = &cf.jump_if_zero_a16;
         //jmptable[0xCB] = &cf."tended", Single16Arg, &cb_extended};
+        jmptable[0xCC] = &cf.call_if_zero;
         jmptable[0xCD] = &cf.call16;
         jmptable[0xD1] = &cf.pop_de;
         jmptable[0xD5] = &cf.push_de;
+        jmptable[0xD9] = &cf.return_enable_interupt;
         jmptable[0xE0] = &cf.load_a_to_indirect8;
         jmptable[0xE1] = &cf.pop_to_HL;
         jmptable[0xE2] = &cf.store_a_to_indirect_c;
@@ -684,6 +700,7 @@ pub const Cpu = struct {
         jmptable[0xE9] = &cf.jmp_hl;
         jmptable[0xEA] = &cf.load_a_to_indirect16;
         jmptable[0xF0] = &cf.load_indirect8_to_a;
+        jmptable[0xF1] = &cf.pop_af;
         jmptable[0xF3] = &cf.disable_interrupts;
         jmptable[0xF5] = &cf.push_af;
         jmptable[0xFE] = &cf.compare_immediate8_ra;
@@ -699,8 +716,10 @@ pub const Cpu = struct {
         extended_jmptable[0x11] = &cf.rotate_left_c;
         extended_jmptable[0x1A] = &cf.rotate_right_d;
         extended_jmptable[0x20] = &cf.shift_left_B;
-        extended_jmptable[0x42] = &cf.copy_compl_bit0_to_d;
-        extended_jmptable[0x7c] = &cf.copy_compl_bit7_to_z;
+        extended_jmptable[0x42] = &cf.copy_compl_dbit0_to_z;
+        extended_jmptable[0x47] = &cf.copy_compl_abit0_to_z;
+        extended_jmptable[0x4f] = &cf.copy_compl_abit1_to_z;
+        extended_jmptable[0x7c] = &cf.copy_compl_hbit7_to_z;
         extended_jmptable[0x87] = &cf.reset_a_bit0;
 
         //const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
@@ -857,8 +876,11 @@ pub const Cpu = struct {
         }
     }
 
-    fn request_dma_transfer(self: *Cpu, addr_base: u8) void {
+    fn request_dma_transfer(self: *Cpu, addr_base_req: u8) void {
         self.dma.requested = true;
+        var addr_base = addr_base_req;
+        if (addr_base == 0xfe) addr_base = 0xde;
+        if (addr_base == 0xff) addr_base = 0xdf;
         self.dma.source = addr_base;
         self.dma.source = self.dma.source << 8;
         self.dma.cycles_remaining = 160;
@@ -950,6 +972,22 @@ pub const Cpu = struct {
     }
 
     fn decode_and_execute(self: *Cpu) mcycles {
+        {
+            const watched_pcs = [_]u16{
+                //0x0100,
+                //0x60a7,
+                //0x6155,
+                0x0171,
+            };
+            //const watched_pcs = [_]u16{};
+            //const watched_pc = 0xFFFF;
+            if (contains(u16, &watched_pcs, self.pc) == true)
+                self.enable_trace = true;
+
+            if (self.enable_trace)
+                self.print_trace();
+        }
+
         const instruction = self.fetch();
         const initialHL = self.r.f.HL;
         var cycles: mcycles = 0;
@@ -981,16 +1019,6 @@ pub const Cpu = struct {
     pub fn step(self: *Cpu) mcycles {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
-        {
-            const watched_pcs = [_]u16{ 0x60a7, 0x6155 };
-            //const watched_pcs = [_]u16{};
-            //const watched_pc = 0xFFFF;
-            if (contains(u16, &watched_pcs, self.pc) == true)
-                self.enable_trace = true;
-
-            if (self.enable_trace)
-                self.print_trace();
-        }
 
         var clocks = execute_interrupts_if_enabled(self);
         clocks += self.decode_and_execute();
@@ -1009,12 +1037,12 @@ pub const Cpu = struct {
         return false;
     }
 
-    inline fn execute_interrupt(self: *Cpu, interrupt_address: u16) mcycles {
-        std.debug.print("Interrupt 0x{x}", .{interrupt_address});
+    fn execute_interrupt(self: *Cpu, interrupt_address: u16) mcycles {
+        std.debug.print("Interrupt 0x{x}\n", .{interrupt_address});
         self.interrupt.enabled = false;
         self.push16(self.pc);
         self.pc = interrupt_address;
-        return 3;
+        return 5;
     }
 
     const Interrup = enum(u8) {
@@ -1049,6 +1077,7 @@ pub const Cpu = struct {
             const current_interrupts_bitfield: u8 = @bitCast(self.interrupt.interrupt_flag);
             const interrupts_to_execute_bitfield: u8 = enabled_interrupts_bitfield & current_interrupts_bitfield;
             if (interrupts_to_execute_bitfield & mask[0] != 0) {
+                self.interrupt.interrupt_flag = @bitCast(current_interrupts_bitfield & ~mask[0]);
                 return self.execute_interrupt(mask[1]);
             }
         }
@@ -1119,6 +1148,7 @@ const SpriteData = struct {
 const GpuStepResult = enum {
     Normal,
     FrameReady,
+    Disabled,
 };
 
 const Gpu = struct {
@@ -1207,6 +1237,7 @@ const Gpu = struct {
     pub fn step(self: *Gpu, cpuClocks: mcycles) GpuStepResult {
         const zone = tracy.beginZone(@src(), .{ .name = "gpu step" });
         defer zone.end();
+        if (!self.lcd_control.lcd_display_enable) return GpuStepResult.Disabled;
         self.mode_clocks += cpuClocks;
         switch (self.lcd_status.mode) {
             0 => { //H-Blank
