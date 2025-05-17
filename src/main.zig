@@ -408,6 +408,11 @@ const Bus = struct {
                 //TODO: do we need to split ram from wram?
                 self.ram[address] = value;
             },
+            0xFE00...0xFE9F => { //OAM
+                //shouldn't be accessed during mode 2 or 3
+                //std.debug.assert(self.gpu.mode != 2 and self.gpu.mode != 3);
+                self.ram[address] = value;
+            },
             0xFF40 => {
                 self.gpu.lcd_control = @bitCast(value);
             },
@@ -550,6 +555,11 @@ pub const Cpu = struct {
         P15_Select_Button: JoypadSelectState,
         _: u2,
     },
+    dma: struct {
+        requested: bool,
+        source: u16,
+        cycles_remaining: u8,
+    },
     sound_flags: packed struct {
         sound_1_enabled: u1,
         sound_2_enabled: u1,
@@ -649,6 +659,7 @@ pub const Cpu = struct {
         jmptable[0xB3] = &cf.or_e_with_a;
         jmptable[0xBE] = &cf.compare_indirectHL_to_a;
         jmptable[0xC1] = &cf.pop_bc;
+        jmptable[0xC0] = &cf.return_if_not_zero;
         jmptable[0xC3] = &cf.jmp;
         jmptable[0xC5] = &cf.push_bc;
         jmptable[0xC8] = &cf.return_from_call_condiional_on_z;
@@ -730,6 +741,11 @@ pub const Cpu = struct {
                 .P15_Select_Button = JoypadSelectState.NotSelected,
                 ._ = 0,
             },
+            .dma = .{
+                .requested = false,
+                .source = 0x00,
+                .cycles_remaining = 0,
+            },
             .sound_flags = .{
                 .sound_1_enabled = 0,
                 .sound_2_enabled = 0,
@@ -801,6 +817,9 @@ pub const Cpu = struct {
             0xFF26 => {
                 self.sound_flags = @bitCast(value);
             },
+            0xFF46 => {
+                self.request_dma_transfer(value);
+            },
             0xFF50 => {
                 self.disable_boot_rom = value;
             },
@@ -813,6 +832,29 @@ pub const Cpu = struct {
             else => {
                 self.bus.write(address, value);
             },
+        }
+    }
+
+    fn request_dma_transfer(self: *Cpu, addr_base: u8) void {
+        self.dma.requested = true;
+        self.dma.source = addr_base;
+        self.dma.source = self.dma.source << 8;
+        self.dma.cycles_remaining = 160;
+    }
+
+    fn handle_dma(self: *Cpu, cycles_elapsed: mcycles) void {
+        if (self.dma.requested == false) return;
+        for (0x00..0x9F) |value| {
+            const value16: u16 = @intCast(value);
+            const source: u16 = self.dma.source + value16;
+            const dest: u16 = 0xFE00 + value16;
+            self.bus.write(dest, self.bus.read(source));
+        }
+        if (self.dma.cycles_remaining < cycles_elapsed) {
+            self.dma.cycles_remaining = 0;
+            self.dma.requested = false;
+        } else {
+            self.dma.cycles_remaining -= @intCast(cycles_elapsed);
         }
     }
 
@@ -830,7 +872,7 @@ pub const Cpu = struct {
 
     pub fn push16(self: *Cpu, value: u16) void {
         if (value == 0x60ed or value == 0x60e0 or value == 0x60dd or value == 0x60ca) {
-            @breakpoint();
+            //@breakpoint();
         }
         self.sp -= 1;
         self.store(self.sp, @intCast(value >> 8));
@@ -854,7 +896,7 @@ pub const Cpu = struct {
         if (instruction == 0xCB) {
             const extended_instruction = self.fetch();
             if (extended_instruction == 124 and self.disable_boot_rom == 1) {
-                @breakpoint();
+                //@breakpoint();
             }
             cycles = self.extended_jmptable[extended_instruction](self) catch {
                 std.debug.panic("Error decoding and executing ext opcode 0xCB, 0x{x:02}\n", .{extended_instruction});
@@ -866,11 +908,11 @@ pub const Cpu = struct {
         }
         const afterHL = self.r.f.HL;
         if (initialHL != afterHL and afterHL == 0x64f8) {
-            @breakpoint();
+            //@breakpoint();
             std.debug.print("HL wirtten with {x}\n", .{afterHL});
         }
         if (self.pc == 0x614a) {
-            @breakpoint();
+            //@breakpoint();
         }
         return cycles;
     }
@@ -891,6 +933,7 @@ pub const Cpu = struct {
 
         var clocks = execute_interrupts_if_enabled(self);
         clocks += self.decode_and_execute();
+        self.handle_dma(clocks);
         self.cycles_counter += clocks;
         return clocks;
     }

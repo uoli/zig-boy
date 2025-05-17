@@ -374,14 +374,21 @@ pub fn jmp_hl(cpu: *Cpu) !mcycles {
 
 pub fn add_u8_as_signed_to_u16(dest: u8, pc: u16) u16 {
     const signed_dest: i16 = @intCast(@as(i8, @bitCast(dest)));
-    const pc_signed: i16 = @intCast(pc);
-    const new_pc_singed: i16 = pc_signed + signed_dest;
+    const pc_signed: i32 = @intCast(pc);
+    const new_pc_singed: i32 = pc_signed + signed_dest;
     return @intCast(new_pc_singed);
 }
 
 pub fn pop_bc(cpu: *Cpu) !mcycles {
     cpu.r.f.BC = cpu.pop16();
     return 3;
+}
+
+pub fn return_if_not_zero(cpu: *Cpu) !mcycles {
+    if (cpu.r.s.f.z == 0) {
+        return return_from_call(cpu);
+    }
+    return 2;
 }
 
 pub fn jmp(cpu: *Cpu) !mcycles {
