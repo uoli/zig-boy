@@ -446,9 +446,11 @@ pub fn add_a_to_a(cpu: *Cpu) !mcycles {
 pub fn add_b_cy_a_to_a(cpu: *Cpu) !mcycles {
     var val, const overflow1 = @addWithOverflow(cpu.r.s.a, cpu.r.s.b);
     val, const overflow2 = @addWithOverflow(val, cpu.r.s.f.c);
+    const halfadd = (cpu.r.s.a & 0x0F) + (cpu.r.s.b & 0x0F) + cpu.r.s.f.c; //TODO: find simpler way?
+    cpu.r.s.a = val;
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
     cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) + (cpu.r.s.b & 0x0F) + cpu.r.s.f.c > 0xF) 1 else 0; //TODO: find simpler way?
+    cpu.r.s.f.h = if (halfadd > 0xF) 1 else 0;
     cpu.r.s.f.c = overflow1 | overflow2;
     return 1;
 }
