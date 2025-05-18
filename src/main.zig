@@ -633,6 +633,7 @@ pub const Cpu = struct {
         jmptable[0x0c] = &cf.inc_c;
         jmptable[0x0d] = &cf.dec_c;
         jmptable[0x0e] = &cf.load_d8_to_c;
+        jmptable[0x0f] = &cf.rotate_right_carry_a;
         jmptable[0x1b] = &cf.dec_de;
         jmptable[0x11] = &cf.load_d16_to_de;
         jmptable[0x12] = &cf.store_a_to_indirectDE;
@@ -689,6 +690,7 @@ pub const Cpu = struct {
         jmptable[0x6b] = &cf.load_e_to_l;
         jmptable[0x6e] = &cf.load_indirect_hl_to_l;
         jmptable[0x6f] = &cf.load_a_to_l;
+        jmptable[0x70] = &cf.store_b_to_indirectHL;
         jmptable[0x71] = &cf.store_c_to_indirectHL;
         jmptable[0x72] = &cf.store_d_to_indirectHL;
         jmptable[0x73] = &cf.store_e_to_indirectHL;
@@ -738,16 +740,19 @@ pub const Cpu = struct {
         jmptable[0xCD] = &cf.call16;
         jmptable[0xD0] = &cf.retun_if_no_carry;
         jmptable[0xD1] = &cf.pop_de;
+        jmptable[0xD2] = &cf.jmp_absolute_not_carry;
         jmptable[0xD5] = &cf.push_de;
         jmptable[0xD6] = &cf.sub_d8;
         jmptable[0xD8] = &cf.return_if_carry;
         jmptable[0xD9] = &cf.return_enable_interupt;
+        jmptable[0xDA] = &cf.jmp_absolute_if_carry;
         jmptable[0xE0] = &cf.load_a_to_indirect8;
         jmptable[0xE1] = &cf.pop_to_HL;
         jmptable[0xE2] = &cf.store_a_to_indirect_c;
         jmptable[0xE5] = &cf.push_hl;
         jmptable[0xE6] = &cf.and_d8_to_a;
         jmptable[0xE9] = &cf.jmp_hl;
+        jmptable[0xEE] = &cf.xor_d8_to_a;
         jmptable[0xEA] = &cf.load_a_to_indirect16;
         jmptable[0xF0] = &cf.load_indirect8_to_a;
         jmptable[0xF1] = &cf.pop_af;
@@ -772,11 +777,13 @@ pub const Cpu = struct {
         extended_jmptable[0x1A] = &cf.rotate_right_d;
         extended_jmptable[0x20] = &cf.shift_left_B;
         extended_jmptable[0x23] = &cf.shift_left_e;
+        extended_jmptable[0x27] = &cf.shift_left_a;
         extended_jmptable[0x37] = &cf.swap_a;
         extended_jmptable[0x3f] = &cf.shift_right_a;
         extended_jmptable[0x42] = &cf.copy_compl_dbit0_to_z;
         extended_jmptable[0x46] = &cf.copy_compl_indirect_hl_bit0_to_z;
         extended_jmptable[0x47] = &cf.copy_compl_abit0_to_z;
+        extended_jmptable[0x4e] = &cf.copy_compl_indirect_hl_bit1_to_z;
         extended_jmptable[0x4f] = &cf.copy_compl_abit1_to_z;
         extended_jmptable[0x56] = &cf.copy_compl_indirect_hl_bit2_to_z;
         extended_jmptable[0x57] = &cf.copy_compl_abit2_to_z;
@@ -785,8 +792,10 @@ pub const Cpu = struct {
         extended_jmptable[0x77] = &cf.copy_compl_abit6_to_z;
         extended_jmptable[0x7c] = &cf.copy_compl_hbit7_to_z;
         extended_jmptable[0x7f] = &cf.copy_compl_abit7_to_z;
+        extended_jmptable[0x86] = &cf.reset_indirect_hl_bit0;
         extended_jmptable[0x87] = &cf.reset_a_bit0;
         extended_jmptable[0x8F] = &cf.reset_a_bit1;
+        extended_jmptable[0x96] = &cf.reset_indirect_hl_bit2;
         extended_jmptable[0x97] = &cf.reset_a_bit2;
         extended_jmptable[0xA6] = &cf.reset_indirecthl_bit4;
         extended_jmptable[0xAE] = &cf.reset_indirecthl_bit5;
@@ -1061,7 +1070,8 @@ pub const Cpu = struct {
                 //0x4e4b,
                 //0x59d8,
                 //0x55d6,
-                0x4086,
+                //0x4086,
+                0x538a,
             };
             //const watched_pcs = [_]u16{};
             //const watched_pc = 0xFFFF;

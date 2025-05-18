@@ -67,6 +67,18 @@ fn rotate_r(cpu: *Cpu, data: *u8) void {
     cpu.r.s.f.c = carry;
 }
 
+fn rotate_right_carry(cpu: *Cpu, data: *u8) mcycles {
+    const carry: u8 = data.* & 0b1;
+    const shifted: u8 = (data.* >> 1);
+    data.* = carry << 7 | shifted;
+
+    cpu.r.s.f.z = 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 0;
+    cpu.r.s.f.c = if (carry & 0b1 != 0) 1 else 0;
+    return 1;
+}
+
 fn add16(cpu: *Cpu, rega: *u16, regb: *u16) !mcycles {
     rega.*, const overflow = @addWithOverflow(rega.*, regb.*);
     const calcH: u16 = (rega.* & 0b111111111111) + (regb.* & 0b111111111111);
@@ -212,6 +224,10 @@ pub fn rotate_left_carry_a(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+pub fn rotate_right_carry_a(cpu: *Cpu) !mcycles {
+    return rotate_right_carry(cpu, &cpu.r.s.a);
+}
+
 pub fn rotate_left_a(cpu: *Cpu) !mcycles {
     rotate_l(cpu, &cpu.r.s.a);
     cpu.r.s.f.z = 0;
@@ -311,6 +327,11 @@ pub fn load_indirect_hl_to_l(cpu: *Cpu) !mcycles {
 pub fn load_a_to_l(cpu: *Cpu) !mcycles {
     cpu.r.s.l = cpu.r.s.a;
     return 1;
+}
+
+pub fn store_b_to_indirectHL(cpu: *Cpu) !mcycles {
+    cpu.store(cpu.r.f.HL, cpu.r.s.b);
+    return 2;
 }
 
 pub fn store_c_to_indirectHL(cpu: *Cpu) !mcycles {
@@ -625,6 +646,26 @@ pub fn jump_s8_if_carry(cpu: *Cpu) !mcycles {
     return timing;
 }
 
+pub fn jmp_absolute_if_carry(cpu: *Cpu) !mcycles {
+    const dest = cpu.fetch16();
+    var timing: mcycles = 3;
+    if (cpu.r.s.f.c == 1) {
+        cpu.pc = dest;
+        timing += 1;
+    }
+    return timing;
+}
+
+pub fn jmp_absolute_not_carry(cpu: *Cpu) !mcycles {
+    const dest = cpu.fetch16();
+    var timing: mcycles = 3;
+    if (cpu.r.s.f.c == 0) {
+        cpu.pc = dest;
+        timing += 1;
+    }
+    return timing;
+}
+
 pub fn add_de_to_hl(cpu: *Cpu) !mcycles {
     cpu.r.f.HL, cpu.r.s.f.c = @addWithOverflow(cpu.r.f.HL, cpu.r.f.DE);
     cpu.r.s.f.z = if (cpu.r.f.HL == 0) 1 else 0;
@@ -805,7 +846,7 @@ pub fn and_a_with_a(cpu: *Cpu) !mcycles {
     return and_r_with_r(cpu, cpu.r.s.a, &cpu.r.s.a);
 }
 
-fn xor_r1_with_r2(cpu: *Cpu, r1: u8, r2: *u8) !mcycles {
+fn xor_r1_with_r2(cpu: *Cpu, r1: u8, r2: *u8) mcycles {
     r2.* ^= r1;
     cpu.r.s.f.z = if (r2.* == 0) 1 else 0;
     cpu.r.s.f.n = 0;
@@ -820,6 +861,10 @@ pub fn xor_b_with_a(cpu: *Cpu) !mcycles {
 
 pub fn xor_a_with_a(cpu: *Cpu) !mcycles {
     return xor_r1_with_r2(cpu, cpu.r.s.a, &cpu.r.s.a);
+}
+
+pub fn xor_d8_to_a(cpu: *Cpu) !mcycles {
+    return 1 + xor_r1_with_r2(cpu, cpu.fetch(), &cpu.r.s.a);
 }
 
 pub fn or_c_with_a(cpu: *Cpu) !mcycles {
@@ -950,6 +995,10 @@ pub fn shift_register_right(cpu: *Cpu, reg: *u8) mcycles {
     return 2;
 }
 
+pub fn shift_left_a(cpu: *Cpu) !mcycles {
+    return shift_register_left(cpu, &cpu.r.s.a);
+}
+
 pub fn shift_left_B(cpu: *Cpu) !mcycles {
     return shift_register_left(cpu, &cpu.r.s.b);
 }
@@ -1009,6 +1058,11 @@ pub fn copy_compl_indirect_hl_bit0_to_z(cpu: *Cpu) !mcycles {
     return 1 + copy_compl_rbitN_to_z(cpu, value, 0);
 }
 
+pub fn copy_compl_indirect_hl_bit1_to_z(cpu: *Cpu) !mcycles {
+    const value = cpu.load(cpu.r.f.HL);
+    return 1 + copy_compl_rbitN_to_z(cpu, value, 1);
+}
+
 pub fn copy_compl_indirect_hl_bit2_to_z(cpu: *Cpu) !mcycles {
     const value = cpu.load(cpu.r.f.HL);
     return 1 + copy_compl_rbitN_to_z(cpu, value, 2);
@@ -1053,6 +1107,18 @@ pub fn reset_a_bit1(cpu: *Cpu) !mcycles {
 pub fn reset_a_bit2(cpu: *Cpu) !mcycles {
     cpu.r.s.a &= inv_bitmasks[2];
     return 2;
+}
+
+pub fn reset_indirect_hl_bit0(cpu: *Cpu) !mcycles {
+    const new_val = cpu.load(cpu.r.f.HL) & inv_bitmasks[0];
+    cpu.store(cpu.r.f.HL, new_val);
+    return 4;
+}
+
+pub fn reset_indirect_hl_bit2(cpu: *Cpu) !mcycles {
+    const new_val = cpu.load(cpu.r.f.HL) & inv_bitmasks[2];
+    cpu.store(cpu.r.f.HL, new_val);
+    return 4;
 }
 
 pub fn reset_indirecthl_bit4(cpu: *Cpu) !mcycles {
