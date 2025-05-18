@@ -295,7 +295,7 @@ const CartridgeTypeMap = [_]?CartridgeType{
     CartridgeType.MBC5_RUMBLE_RAM_BATTERY,
 };
 
-const Cartridge = struct {
+pub const Cartridge = struct {
     rom: []const u8,
     cartridge_type: CartridgeType,
     bank_selected: u8,
@@ -309,7 +309,7 @@ const Cartridge = struct {
         };
     }
 
-    fn read(self: Cartridge, address: u16) u8 {
+    pub fn read(self: Cartridge, address: u16) u8 {
         switch (address) {
             0x0000...0x3FFF => return self.rom[address],
             0x4000...0x7FFF => {
@@ -322,160 +322,12 @@ const Cartridge = struct {
         return self.rom[address];
     }
 
-    fn write(self: *Cartridge, address: u16, value: u8) void {
+    pub fn write(self: *Cartridge, address: u16, value: u8) void {
         switch (address) {
             0x2000...0x3FFF => {
                 self.bank_selected = if (value == 0) 1 else value;
             },
             else => std.debug.panic("unhandled cartridge write address 0x{x}", .{address}),
-        }
-    }
-};
-
-pub const Bus = struct {
-    ram: []u8,
-    cartridge: *Cartridge,
-    gpu: *Gpu = undefined,
-    cpu: *Cpu = undefined,
-
-    pub fn init(ram: []u8, cartridge: *Cartridge) Bus {
-        return Bus{
-            .ram = ram,
-            .cartridge = cartridge,
-        };
-    }
-
-    fn connectGpu(self: *Bus, gpu: *Gpu) void {
-        self.gpu = gpu;
-    }
-
-    fn connectCpu(self: *Bus, cpu: *Cpu) void {
-        self.cpu = cpu;
-    }
-
-    pub fn raise_cpu_interrupt(self: *Bus, interrupt: Cpu.Interrup) void {
-        self.cpu.raise_interrupt(interrupt);
-    }
-
-    pub fn read(self: Bus, address: u16) u8 {
-        return switch (address) {
-            0...0x7FFF => {
-                return self.cartridge.read(address);
-            },
-            0x8000...0x9FFF => { //vram
-                //TODO: do we need to split ram from vram?
-                //if (address >= 0x8000 and address <= 0x97FF and self.cpu.disable_boot_rom == 1 and value != 0) {
-                //    @breakpoint();
-                //}
-                return self.ram[address];
-            },
-            0xC000...0xCFFF => { //wram bank 0
-                //TODO: do we need to split ram from wram?
-                return self.ram[address];
-            },
-            0xD000...0xDFFF => { //wram bank 1
-                //TODO: do we need to split ram from wram?
-                return self.ram[address];
-            },
-            0xFF40 => {
-                return @bitCast(self.gpu.lcd_control);
-            },
-            0xFF42 => {
-                return self.gpu.scroll_y;
-            },
-            0xFF43 => {
-                return self.gpu.scroll_x;
-            },
-            0xFF44 => {
-                return self.gpu.ly;
-                //return 0;
-            },
-            0xFF48 => {
-                return @bitCast(self.gpu.object_palette[0]);
-            },
-            0xFF49 => {
-                return @bitCast(self.gpu.object_palette[1]);
-            },
-            0xFF80...0xFFFE => { // HRAM
-                return self.ram[address];
-            },
-            else => {
-                std.debug.panic("unhandled read address 0x{x}", .{address});
-            },
-        };
-    }
-
-    pub fn write(self: Bus, address: u16, value: u8) void {
-        // if (address == 0xc056 and self.cpu.disable_boot_rom == 1 and value != 0) {
-        //     @breakpoint();
-        // }
-        switch (address) {
-            0...0x7FFF => {
-                self.cartridge.write(address, value);
-            },
-            0x8000...0x9FFF => { //vram
-                //TODO: do we need to split ram from vram?
-
-                self.ram[address] = value;
-            },
-            0xC000...0xCFFF => { //wram bank 0
-                //TODO: do we need to split ram from wram?
-                self.ram[address] = value;
-            },
-            0xD000...0xDFFF => { //wram bank 1
-                //TODO: do we need to split ram from wram?
-                self.ram[address] = value;
-            },
-            0xFE00...0xFE9F => { //OAM
-                //shouldn't be accessed during mode 2 or 3
-                //std.debug.assert(self.gpu.mode != 2 and self.gpu.mode != 3);
-                self.ram[address] = value;
-            },
-            0xFF30...0xFF3F => { //Wave Pattern RAM
-                self.ram[address] = value;
-            },
-            0xFF40 => {
-                const intialStatus = self.gpu.lcd_control.lcd_display_enable;
-                self.gpu.lcd_control = @bitCast(value);
-                if (intialStatus != self.gpu.lcd_control.lcd_display_enable and self.gpu.lcd_control.lcd_display_enable) {
-                    self.gpu.ly = 0;
-                    self.gpu.mode = 0;
-                    self.gpu.mode_clocks = 0;
-                }
-            },
-            0xFF41 => {
-                self.gpu.lcd_status = @bitCast(value);
-            },
-            0xFF42 => {
-                self.gpu.scroll_y = value;
-            },
-            0xFF43 => {
-                self.gpu.scroll_x = value;
-            },
-            0xFF47 => {
-                self.gpu.background_palette = @bitCast(value);
-            },
-            0xFF48 => {
-                self.gpu.object_palette[0] = @bitCast(value);
-            },
-            0xFF49 => {
-                self.gpu.object_palette[1] = @bitCast(value);
-            },
-            0xFF4A => {
-                self.gpu.window_y = value;
-            },
-            0xFF4B => {
-                self.gpu.window_x = value;
-            },
-            0xFEA0...0xFEFF => { //Not usable
-                std.debug.assert(false);
-            },
-            0xFF80...0xFFFE => { // HRAM
-                self.ram[address] = value;
-            },
-            else => {
-                std.debug.panic("unhandled write address 0x{x}", .{address});
-            },
         }
     }
 };
@@ -1166,7 +1018,7 @@ pub const Cpu = struct {
         Joypad = 0b00010000,
     };
 
-    fn raise_interrupt(self: *Cpu, interrupt: Interrup) void {
+    pub fn raise_interrupt(self: *Cpu, interrupt: Interrup) void {
         const interrupt_bit_mask: u8 = @intFromEnum(interrupt);
         const current_interrupts: u8 = @bitCast(self.interrupt.interrupt_flag);
         const new_bitmask = interrupt_bit_mask | current_interrupts;
@@ -1268,7 +1120,9 @@ const tracy = @import("tracy");
 const cpu_opcode_matadata_gen = @import("cpu_opcode_matadata_gen");
 //pub const cpu_functions = @import("cpu_functions.zig");
 pub const cpu_utils = @import("cpu_utils.zig");
+pub const bus_import = @import("bus.zig");
 pub const gpu_import = @import("gpu.zig");
+pub const Bus = bus_import.Bus;
 pub const Gpu = gpu_import.Gpu;
 pub const GpuStepResult = gpu_import.GpuStepResult;
 const OpCodeInfo = cpu_utils.OpCodeInfo;
