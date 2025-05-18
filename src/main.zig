@@ -1447,7 +1447,7 @@ const Gpu = struct {
     fn drawscanline(self: *Gpu) void {
         const tile_width = 8;
         const tile_height = 8;
-        const shades = [_]u8{ 0, 63, 128, 255 }; //this might need to be inverted
+        const shades = [_]u8{ 255, 128, 63, 0 };
 
         const bg_tile_data_vram = if (self.lcd_control.bg_and_window_tile_select) self.ram[0x8000..0x8FFF] else self.ram[0x8800..0x97FF];
         const bg_tile_data = sliceCast(SpriteData, bg_tile_data_vram, 0, 0xFFF);
@@ -1460,7 +1460,7 @@ const Gpu = struct {
         for (bg_map_1, 0..) |tile_index, i| {
             const tile_x = i % 32;
             const tile_y = i / 32;
-            const tile_index_mapped = if (self.lcd_control.bg_and_window_tile_select) tile_index else (tile_index + 0x7F) % 0xFF;
+            const tile_index_mapped = if (self.lcd_control.bg_and_window_tile_select) tile_index else (tile_index +% 0x80);
             const tile = bg_tile_data[tile_index_mapped];
 
             const scrolled_y = (self.ly + self.scroll_y) % 255;
@@ -1503,17 +1503,21 @@ const Gpu = struct {
         const sprite_width = 8;
         for (0..RESOLUTION_WIDTH) |index| {
             const i: u8 = @intCast(index);
-            const scrolled_x = self.scroll_x + i % 255;
-            const scrolled_y = self.scroll_y + self.ly % 255;
+            //const scrolled_x = self.scroll_x + i % 255;
+            //const scrolled_y = self.scroll_y + self.ly % 255;
+            const scrolled_x = i;
+            const scrolled_y = self.ly;
 
             for (0..self.visibleSpritesCount) |si| {
                 const sprite = self.visibleSprites[si];
                 //TODO: handle priority and x-ordering
                 const sprite_left_x: i16 = (@as(i16, @intCast(sprite.x)) - 8);
                 const sprite_right = (sprite_left_x + sprite_width);
-                if (sprite_left_x > scrolled_x or sprite_right <= scrolled_x) continue;
+                if (sprite_left_x > scrolled_x or sprite_right <= scrolled_x) continue; //this is not fully correct
+
                 const sprite_y: i16 = scrolled_y - (@as(i16, @intCast(sprite.y)) - 16);
                 const sprite_x: u8 = @as(u8, @intCast(scrolled_x - sprite_left_x));
+
                 const sprite_pattern = tile_data[sprite.tile_index];
                 const color_index = sprite_pattern.get_pixel_color_index(sprite_x, @as(u8, @intCast(sprite_y)));
                 if (color_index == 0) continue; //transparent
@@ -1550,8 +1554,8 @@ const Gpu = struct {
         const fb_width = tiles_colum * 8;
 
         const sprite_table = self.ram[0x8000..0x97FF];
-        const sprite_data = sliceCast(SpriteData, sprite_table, 0, 0xFF + 0xF);
-        const shades = [_]u8{ 0, 63, 128, 255 };
+        const sprite_data = sliceCast(SpriteData, sprite_table, 0, 0x0180);
+        const shades = [_]u8{ 255, 128, 63, 0 };
         for (sprite_data, 0..) |sprite, si| {
             const fbGrid_x = si % tiles_colum;
             const fbGrid_y = si / tiles_colum;
