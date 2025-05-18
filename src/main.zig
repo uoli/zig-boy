@@ -1466,7 +1466,7 @@ const Gpu = struct {
             const scrolled_y = (self.ly + self.scroll_y) % 255;
 
             if (tile_y * tile_height > scrolled_y or tile_y * tile_height + tile_height <= scrolled_y) continue; //TODO: optimize so we dont have to check and continue here
-            if (tile_x * tile_width > RESOLUTION_WIDTH) continue;
+            if (tile_x * tile_width > RESOLUTION_WIDTH) continue; //TODO: this should probably take scroll x into account
 
             const y: u8 = scrolled_y % tile_height;
             for (0..tile_width) |x| {
@@ -1493,6 +1493,32 @@ const Gpu = struct {
         }
 
         //Draw Window
+        if (self.lcd_control.window_display_enable == true and self.window_y <= self.ly) {
+            const win_map = if (self.lcd_control.window_tilemap_display_select == false) self.ram[0x9800..0x9BFF] else self.ram[0x9C00..0x9FFF];
+            for (win_map, 0..) |tile_index, i| {
+                const tile_x = i % 32;
+                const tile_y = i / 32;
+                const tile_index_mapped = if (self.lcd_control.bg_and_window_tile_select) tile_index else (tile_index +% 0x80);
+                const tile = bg_tile_data[tile_index_mapped];
+                const view_y = self.ly;
+
+                if (tile_y * tile_height > view_y or tile_y * tile_height + tile_height <= view_y) continue; //TODO: optimize so we dont have to check and continue here
+                if (tile_x * tile_width > RESOLUTION_WIDTH) continue;
+
+                const y: u8 = view_y % tile_height;
+
+                for (0..tile_width) |x| {
+                    const framebuffer_x = tile_x * 8 + x;
+                    if (framebuffer_x < 0 or framebuffer_x >= RESOLUTION_WIDTH) break;
+
+                    const color_index = tile.get_pixel_color_index(@intCast(x), y);
+                    const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + @as(usize, @intCast(framebuffer_x));
+                    if (framebuffer_index >= self.framebuffer.len)
+                        break;
+                    self.framebuffer[framebuffer_index] = shades[self.getBackgroundColor(color_index)];
+                }
+            }
+        }
 
         //draw sprites
         const tile_data_vram = self.ram[0x8000..0x8FFF];
