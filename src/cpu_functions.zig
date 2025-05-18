@@ -1,7 +1,8 @@
-const main = @import("main.zig");
-const Cpu = main.Cpu;
-const mcycles = main.mcycles;
-const opFunc = main.opFunc;
+const cpu_import = @import("cpu.zig");
+const Cpu = cpu_import.Cpu;
+
+const mcycles = cpu_import.mcycles;
+const opFunc = cpu_import.opFunc;
 
 pub fn nop(_: *Cpu) !mcycles {
     return 1;

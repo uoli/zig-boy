@@ -382,9 +382,10 @@ fn sliceCast(comptime T: type, buffer: []const u8, offset: usize, count: usize) 
 }
 
 const std = @import("std");
-const main = @import("main.zig");
 const tracy = @import("tracy");
+const cpu_import = @import("cpu.zig");
+const bus_import = @import("bus.zig");
 
-const Cpu = main.Cpu;
-const Bus = main.Bus;
-const mcycles = main.mcycles;
+const Cpu = cpu_import.Cpu;
+const Bus = bus_import.Bus;
+const mcycles = cpu_import.mcycles;

@@ -147,12 +147,11 @@ pub const Bus = struct {
 };
 
 const std = @import("std");
-const main = @import("main.zig");
-const gpu_import = @import("gpu.zig");
 const tracy = @import("tracy");
+const cartridge_import = @import("cartridge.zig");
+const cpu_import = @import("cpu.zig");
+const gpu_import = @import("gpu.zig");
 
-const Cpu = main.Cpu;
+const Cpu = cpu_import.Cpu;
 const Gpu = gpu_import.Gpu;
-
-const Cartridge = main.Cartridge;
-const mcycles = main.mcycles;
+const Cartridge = cartridge_import.Cartridge;
