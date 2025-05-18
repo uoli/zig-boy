@@ -361,6 +361,13 @@ const Bus = struct {
             0...0x7FFF => {
                 return self.cartridge.read(address);
             },
+            0x8000...0x9FFF => { //vram
+                //TODO: do we need to split ram from vram?
+                //if (address >= 0x8000 and address <= 0x97FF and self.cpu.disable_boot_rom == 1 and value != 0) {
+                //    @breakpoint();
+                //}
+                return self.ram[address];
+            },
             0xC000...0xCFFF => { //wram bank 0
                 //TODO: do we need to split ram from wram?
                 return self.ram[address];
@@ -381,6 +388,12 @@ const Bus = struct {
             0xFF44 => {
                 return self.gpu.ly;
                 //return 0;
+            },
+            0xFF48 => {
+                return @bitCast(self.gpu.object_palette[0]);
+            },
+            0xFF49 => {
+                return @bitCast(self.gpu.object_palette[1]);
             },
             0xFF80...0xFFFE => { // HRAM
                 return self.ram[address];
@@ -647,6 +660,7 @@ pub const Cpu = struct {
         jmptable[0x30] = &cf.jump_not_carry_s8;
         jmptable[0x31] = &cf.load_d16_to_sp;
         jmptable[0x32] = &cf.store_a_to_indirectHL_dec;
+        jmptable[0x34] = &cf.inc_indirect_hl;
         jmptable[0x36] = &cf.store_d8_to_indirectHL;
         jmptable[0x37] = &cf.set_carry_flag;
         jmptable[0x38] = &cf.jump_s8_if_carry;
@@ -665,6 +679,7 @@ pub const Cpu = struct {
         jmptable[0x50] = &cf.load_b_to_d;
         jmptable[0x51] = &cf.load_c_to_d;
         jmptable[0x54] = &cf.load_h_to_d;
+        jmptable[0x56] = &cf.load_indirect_hl_to_d;
         jmptable[0x57] = &cf.load_a_to_d;
         jmptable[0x5D] = &cf.load_l_to_e;
         jmptable[0x5F] = &cf.load_a_to_e;
@@ -686,6 +701,7 @@ pub const Cpu = struct {
         jmptable[0x7c] = &cf.load_h_to_a;
         jmptable[0x7d] = &cf.load_l_to_a;
         jmptable[0x7e] = &cf.load_hl_indirect_to_a;
+        jmptable[0x80] = &cf.add_a_to_b;
         jmptable[0x81] = &cf.add_a_to_c;
         jmptable[0x83] = &cf.add_a_to_e;
         jmptable[0x85] = &cf.add_a_to_l;
@@ -695,12 +711,17 @@ pub const Cpu = struct {
         jmptable[0x90] = &cf.subtract_b_from_a;
         jmptable[0x95] = &cf.subtract_l_from_a;
         jmptable[0x98] = &cf.subtract_a_b_cf;
+        jmptable[0xA0] = &cf.and_b_with_a;
+        jmptable[0xA3] = &cf.and_e_with_a;
         jmptable[0xA7] = &cf.and_a_with_a;
+        jmptable[0xA8] = &cf.xor_b_with_a;
         jmptable[0xAF] = &cf.xor_a_with_a;
         jmptable[0xB0] = &cf.or_b_with_a;
         jmptable[0xB1] = &cf.or_c_with_a;
         jmptable[0xB2] = &cf.or_d_with_a;
         jmptable[0xB3] = &cf.or_e_with_a;
+        jmptable[0xB6] = &cf.or_indirect_hl_with_a;
+        jmptable[0xB8] = &cf.compare_b_to_a;
         jmptable[0xB9] = &cf.compare_c_to_a;
         jmptable[0xBE] = &cf.compare_indirectHL_to_a;
         jmptable[0xC1] = &cf.pop_bc;
@@ -719,6 +740,7 @@ pub const Cpu = struct {
         jmptable[0xD1] = &cf.pop_de;
         jmptable[0xD5] = &cf.push_de;
         jmptable[0xD6] = &cf.sub_d8;
+        jmptable[0xD8] = &cf.return_if_carry;
         jmptable[0xD9] = &cf.return_enable_interupt;
         jmptable[0xE0] = &cf.load_a_to_indirect8;
         jmptable[0xE1] = &cf.pop_to_HL;
@@ -731,6 +753,7 @@ pub const Cpu = struct {
         jmptable[0xF1] = &cf.pop_af;
         jmptable[0xF3] = &cf.disable_interrupts;
         jmptable[0xF5] = &cf.push_af;
+        jmptable[0xF6] = &cf.or_d8;
         jmptable[0xF8] = &cf.add_sp_s8_to_hl;
         jmptable[0xF9] = &cf.load_hl_to_sp;
         jmptable[0xFE] = &cf.compare_immediate8_ra;
@@ -743,6 +766,7 @@ pub const Cpu = struct {
 
         cpu_opcode_matadata_gen.get_extopcodes_table(&extended_opcodetable);
 
+        extended_jmptable[0x0e] = &cf.rotate_right_indirect_HL;
         extended_jmptable[0x11] = &cf.rotate_left_c;
         extended_jmptable[0x12] = &cf.rotate_left_d;
         extended_jmptable[0x1A] = &cf.rotate_right_d;
@@ -757,6 +781,7 @@ pub const Cpu = struct {
         extended_jmptable[0x56] = &cf.copy_compl_indirect_hl_bit2_to_z;
         extended_jmptable[0x57] = &cf.copy_compl_abit2_to_z;
         extended_jmptable[0x6f] = &cf.copy_compl_abit5_to_z;
+        extended_jmptable[0x76] = &cf.copy_compl_indirect_hl_bit6_to_z;
         extended_jmptable[0x77] = &cf.copy_compl_abit6_to_z;
         extended_jmptable[0x7c] = &cf.copy_compl_hbit7_to_z;
         extended_jmptable[0x7f] = &cf.copy_compl_abit7_to_z;
@@ -861,6 +886,10 @@ pub const Cpu = struct {
             },
             0xFF04 => {
                 return @truncate(self.timer.divider_register);
+            },
+            0xFF10...0xFF25 => {
+                //No-Impl Sound related I/O ops
+                return 0;
             },
             0xFFFF => {
                 return @bitCast(self.interrupt.interrupt_enabled);
@@ -1031,7 +1060,8 @@ pub const Cpu = struct {
                 //0x1dd1,
                 //0x4e4b,
                 //0x59d8,
-                0x55d6,
+                //0x55d6,
+                0x4086,
             };
             //const watched_pcs = [_]u16{};
             //const watched_pc = 0xFFFF;
