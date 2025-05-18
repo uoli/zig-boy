@@ -654,6 +654,7 @@ pub const Cpu = struct {
         jmptable[0x3c] = &cf.inc_a;
         jmptable[0x3d] = &cf.dec_a;
         jmptable[0x3e] = &cf.load_d8_to_a;
+        jmptable[0x3f] = &cf.flip_carry_flag;
         jmptable[0x41] = &cf.load_c_to_b;
         jmptable[0x42] = &cf.load_d_to_b;
         jmptable[0x44] = &cf.load_h_to_b;
@@ -669,7 +670,9 @@ pub const Cpu = struct {
         jmptable[0x5F] = &cf.load_a_to_e;
         jmptable[0x62] = &cf.load_d_to_h;
         jmptable[0x67] = &cf.load_a_to_h;
+        jmptable[0x68] = &cf.load_b_to_l;
         jmptable[0x6b] = &cf.load_e_to_l;
+        jmptable[0x6e] = &cf.load_indirect_hl_to_l;
         jmptable[0x6f] = &cf.load_a_to_l;
         jmptable[0x71] = &cf.store_c_to_indirectHL;
         jmptable[0x72] = &cf.store_d_to_indirectHL;
@@ -696,18 +699,20 @@ pub const Cpu = struct {
         jmptable[0xAF] = &cf.xor_a_with_a;
         jmptable[0xB0] = &cf.or_b_with_a;
         jmptable[0xB1] = &cf.or_c_with_a;
+        jmptable[0xB2] = &cf.or_d_with_a;
         jmptable[0xB3] = &cf.or_e_with_a;
         jmptable[0xB9] = &cf.compare_c_to_a;
         jmptable[0xBE] = &cf.compare_indirectHL_to_a;
         jmptable[0xC1] = &cf.pop_bc;
         jmptable[0xC0] = &cf.return_if_not_zero;
+        jmptable[0xC2] = &cf.jmp_if_not_zero;
         jmptable[0xC3] = &cf.jmp;
         jmptable[0xC5] = &cf.push_bc;
         jmptable[0xC6] = &cf.add_a_d8;
         jmptable[0xC8] = &cf.return_from_call_condiional_on_z;
         jmptable[0xC9] = &cf.return_from_call;
         jmptable[0xCA] = &cf.jump_if_zero_a16;
-        //jmptable[0xCB] = &cf."tended", Single16Arg, &cb_extended};
+        //jmptable[0xCB] = &cf.cb_extended;
         jmptable[0xCC] = &cf.call_if_zero;
         jmptable[0xCD] = &cf.call16;
         jmptable[0xD0] = &cf.retun_if_no_carry;
@@ -739,12 +744,17 @@ pub const Cpu = struct {
         cpu_opcode_matadata_gen.get_extopcodes_table(&extended_opcodetable);
 
         extended_jmptable[0x11] = &cf.rotate_left_c;
+        extended_jmptable[0x12] = &cf.rotate_left_d;
         extended_jmptable[0x1A] = &cf.rotate_right_d;
         extended_jmptable[0x20] = &cf.shift_left_B;
+        extended_jmptable[0x23] = &cf.shift_left_e;
         extended_jmptable[0x37] = &cf.swap_a;
+        extended_jmptable[0x3f] = &cf.shift_right_a;
         extended_jmptable[0x42] = &cf.copy_compl_dbit0_to_z;
+        extended_jmptable[0x46] = &cf.copy_compl_indirect_hl_bit0_to_z;
         extended_jmptable[0x47] = &cf.copy_compl_abit0_to_z;
         extended_jmptable[0x4f] = &cf.copy_compl_abit1_to_z;
+        extended_jmptable[0x56] = &cf.copy_compl_indirect_hl_bit2_to_z;
         extended_jmptable[0x57] = &cf.copy_compl_abit2_to_z;
         extended_jmptable[0x6f] = &cf.copy_compl_abit5_to_z;
         extended_jmptable[0x77] = &cf.copy_compl_abit6_to_z;
@@ -753,10 +763,12 @@ pub const Cpu = struct {
         extended_jmptable[0x87] = &cf.reset_a_bit0;
         extended_jmptable[0x8F] = &cf.reset_a_bit1;
         extended_jmptable[0x97] = &cf.reset_a_bit2;
+        extended_jmptable[0xA6] = &cf.reset_indirecthl_bit4;
         extended_jmptable[0xAE] = &cf.reset_indirecthl_bit5;
         extended_jmptable[0xAF] = &cf.reset_a_bit5;
         extended_jmptable[0xD6] = &cf.set_indirect_hl_bit2;
         extended_jmptable[0xDE] = &cf.set_indirect_hl_bit3;
+        extended_jmptable[0xF6] = &cf.set_indirect_hl_bit6;
         extended_jmptable[0xFF] = &cf.set_a_bit7;
 
         //const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
@@ -1018,7 +1030,8 @@ pub const Cpu = struct {
                 //0x0171,
                 //0x1dd1,
                 //0x4e4b,
-                0x59d8,
+                //0x59d8,
+                0x55d6,
             };
             //const watched_pcs = [_]u16{};
             //const watched_pc = 0xFFFF;
@@ -1422,7 +1435,11 @@ const Gpu = struct {
                 const sprite_pattern = tile_data[sprite.tile_index];
                 const color_index = sprite_pattern.get_pixel_color_index(sprite_x, sprite_y);
                 const palette_table = if (sprite.flags.pallete == 0) self.ram[0xFF48] else self.ram[0xFF49];
-                const shade: u2 = @intCast((palette_table >> (color_index * 2)) & 0b11);
+
+                const shift_pallete_by: u3 = @as(u3, color_index) * 2;
+                const palette_table_shifted: u8 = palette_table >> shift_pallete_by;
+                const shade: u2 = @intCast(palette_table_shifted & 0b11);
+
                 if (shade == 0) continue; //transparency
                 const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + index;
                 self.framebuffer[framebuffer_index] = shades[shade];
