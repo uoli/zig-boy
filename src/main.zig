@@ -15,6 +15,18 @@ pub fn main() !void {
     tracy.setThreadName("Main");
     defer tracy.message("Graceful main thread exit");
 
+    //  Get an allocator
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const deinit_status = gpa.deinit();
+        //fail test; can't try in defer as defer is executed after we return
+        if (deinit_status == .leak) expect(false) catch @panic("leak?");
+    }
+    const allocator = gpa.allocator();
+    //var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    //defer arena.deinit();
+    //const allocator = arena.allocator();
+
     // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
     std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
     // stdout is for the actual output of your application, for example if you
@@ -66,7 +78,7 @@ pub fn main() !void {
     );
     defer c.SDL_DestroyTexture(tilesTexture);
 
-    var emulator = try Emulator.Init();
+    var emulator = try Emulator.Init(allocator);
     defer emulator.close();
 
     var prev_time = try std.time.Instant.now();
@@ -137,20 +149,13 @@ fn copy_framebuffer_to_SDL_tex(fbi: FrameBufferInfo, texture: ?*c.SDL_Texture) v
 
 const Emulator = struct {
     //gpa: std.heap.DebugAllocator,
-    allocator: std.mem.Allocator,
+    allocator: *const std.mem.Allocator,
     cpu: *Cpu,
     gpu: *Gpu,
     boot_rom: []u8,
     cartridge_rom: []u8,
 
-    pub fn Init() !Emulator {
-        //  Get an allocator
-        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-        const allocator = gpa.allocator();
-        //var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        //defer arena.deinit();
-        //const allocator = arena.allocator();
-
+    pub fn Init(allocator: Allocator) !Emulator {
         const boot_location = "F:\\Projects\\higan\\higan\\System\\Game Boy\\boot.dmg-1.rom";
         const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Pokemon Red (UE) [S][!].gb";
         //const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Tetris (World) (Rev 1).gb";
@@ -163,11 +168,7 @@ const Emulator = struct {
         const cartridge = try allocator.create(Cartridge);
         cartridge.* = Cartridge.init(cartridge_rom[0..]);
 
-        //var device_rom = [];
-
-        //var ram: [8 << 10 << 10]u8 = undefined;
         var ram = try allocator.alloc(u8, 8 << 10 << 10);
-
         @memset(ram, 0);
 
         var bus = try allocator.create(Bus);
@@ -184,7 +185,7 @@ const Emulator = struct {
 
         return Emulator{
             //.gpa = gpa,
-            .allocator = allocator,
+            .allocator = &allocator,
             .cpu = cpu,
             .gpu = gpu,
             .boot_rom = boot_rom,
@@ -193,12 +194,15 @@ const Emulator = struct {
     }
 
     pub fn close(self: Emulator) void {
+        self.allocator.destroy(self.cpu.bus.cartridge);
+        self.allocator.free(self.cpu.bus.ram);
+
+        self.allocator.destroy(self.cpu.bus);
+        self.allocator.destroy(self.cpu);
+        self.allocator.destroy(self.gpu);
+
         self.allocator.free(self.cartridge_rom);
         self.allocator.free(self.boot_rom);
-
-        //const deinit_status = self.gpa.deinit();
-        //fail test; can't try in defer as defer is executed after we return
-        //if (deinit_status == .leak) expect(false) catch @panic("TEST FAIL");
     }
 
     pub fn run_until_frameready(self: Emulator) !void {
@@ -266,8 +270,6 @@ const Cpu = cpu_import.Cpu;
 const Gpu = gpu_import.Gpu;
 const Cartridge = cartridge_import.Cartridge;
 const GpuStepResult = gpu_import.GpuStepResult;
-const OpCodeInfo = cpu_utils.OpCodeInfo;
-const ArgInfo = cpu_utils.ArgInfo;
 
 // This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
 const lib = @import("zig_hello_world_lib");
