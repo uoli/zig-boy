@@ -1449,8 +1449,8 @@ const Gpu = struct {
         const tile_height = 8;
         const shades = [_]u8{ 0, 63, 128, 255 }; //this might need to be inverted
 
-        const tile_data_vram = if (self.lcd_control.bg_and_window_tile_select) self.ram[0x8000..0x8FFF] else self.ram[0x8800..0x97FF];
-        const tile_data = sliceCast(SpriteData, tile_data_vram, 0, 0xFFF);
+        const bg_tile_data_vram = if (self.lcd_control.bg_and_window_tile_select) self.ram[0x8000..0x8FFF] else self.ram[0x8800..0x97FF];
+        const bg_tile_data = sliceCast(SpriteData, bg_tile_data_vram, 0, 0xFFF);
 
         //std.debug.assert(self.lcd_control.bg_and_window_tile_select == true);
 
@@ -1461,7 +1461,7 @@ const Gpu = struct {
             const tile_x = i % 32;
             const tile_y = i / 32;
             const tile_index_mapped = if (self.lcd_control.bg_and_window_tile_select) tile_index else (tile_index + 0x7F) % 0xFF;
-            const tile = tile_data[tile_index_mapped];
+            const tile = bg_tile_data[tile_index_mapped];
 
             const scrolled_y = (self.ly + self.scroll_y) % 255;
 
@@ -1495,6 +1495,8 @@ const Gpu = struct {
         //Draw Window
 
         //draw sprites
+        const tile_data_vram = self.ram[0x8000..0x8FFF];
+        const tile_data = sliceCast(SpriteData, tile_data_vram, 0, 0xFFF);
         if (self.dbg_frame_count == 910) {
             //@breakpoint();
         }
