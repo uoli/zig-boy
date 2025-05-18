@@ -99,6 +99,7 @@ pub fn main() !void {
         c.SDL_GetWindowSize(screen, @ptrCast(&screen_width), @ptrCast(&screen_height));
         const ratio = @divTrunc(screen_height, Gpu.TILEDEBUG_HEIGHT);
 
+        _ = c.SDL_SetRenderDrawColor(renderer, 0x30, 0x30, 0x30, 0xFF);
         _ = c.SDL_RenderClear(renderer);
         const gameRect = c.SDL_Rect{ .x = 0, .y = 0, .w = Gpu.RESOLUTION_WIDTH * ratio, .h = Gpu.RESOLUTION_HEIGHT * ratio };
         const tilesRect = c.SDL_Rect{ .x = Gpu.RESOLUTION_WIDTH * ratio + 10, .y = 0, .w = Gpu.TILEDEBUG_WIDTH * ratio, .h = Gpu.TILEDEBUG_HEIGHT * ratio };
@@ -405,15 +406,16 @@ const Bus = struct {
     }
 
     pub fn write(self: Bus, address: u16, value: u8) void {
+        // if (address == 0xc056 and self.cpu.disable_boot_rom == 1 and value != 0) {
+        //     @breakpoint();
+        // }
         switch (address) {
             0...0x7FFF => {
                 self.cartridge.write(address, value);
             },
             0x8000...0x9FFF => { //vram
                 //TODO: do we need to split ram from vram?
-                //if (address >= 0x8000 and address <= 0x97FF and self.cpu.disable_boot_rom == 1 and value != 0) {
-                //    @breakpoint();
-                //}
+
                 self.ram[address] = value;
             },
             0xC000...0xCFFF => { //wram bank 0
@@ -427,6 +429,9 @@ const Bus = struct {
             0xFE00...0xFE9F => { //OAM
                 //shouldn't be accessed during mode 2 or 3
                 //std.debug.assert(self.gpu.mode != 2 and self.gpu.mode != 3);
+                self.ram[address] = value;
+            },
+            0xFF30...0xFF3F => { //Wave Pattern RAM
                 self.ram[address] = value;
             },
             0xFF40 => {
@@ -645,6 +650,7 @@ pub const Cpu = struct {
         jmptable[0x18] = &cf.jmp_s8;
         jmptable[0x19] = &cf.add_de_to_hl;
         jmptable[0x1A] = &cf.load_indirectDE_to_a;
+        jmptable[0x1C] = &cf.inc_e;
         jmptable[0x1D] = &cf.dec_e;
         jmptable[0x1E] = &cf.load_d8_to_e;
         jmptable[0x20] = &cf.jmp_nz_s8;
@@ -675,6 +681,7 @@ pub const Cpu = struct {
         jmptable[0x41] = &cf.load_c_to_b;
         jmptable[0x42] = &cf.load_d_to_b;
         jmptable[0x44] = &cf.load_h_to_b;
+        jmptable[0x46] = &cf.load_indirect_hl_to_b;
         jmptable[0x47] = &cf.load_a_to_b;
         jmptable[0x4a] = &cf.load_d_to_c;
         jmptable[0x4d] = &cf.load_l_to_c;
@@ -685,6 +692,7 @@ pub const Cpu = struct {
         jmptable[0x56] = &cf.load_indirect_hl_to_d;
         jmptable[0x57] = &cf.load_a_to_d;
         jmptable[0x5D] = &cf.load_l_to_e;
+        jmptable[0x5E] = &cf.load_indirect_hl_to_e;
         jmptable[0x5F] = &cf.load_a_to_e;
         jmptable[0x62] = &cf.load_d_to_h;
         jmptable[0x67] = &cf.load_a_to_h;
@@ -707,12 +715,14 @@ pub const Cpu = struct {
         jmptable[0x7e] = &cf.load_hl_indirect_to_a;
         jmptable[0x80] = &cf.add_a_to_b;
         jmptable[0x81] = &cf.add_a_to_c;
+        jmptable[0x82] = &cf.add_a_to_d;
         jmptable[0x83] = &cf.add_a_to_e;
         jmptable[0x85] = &cf.add_a_to_l;
         jmptable[0x86] = &cf.add_a_to_hl_indirect;
         jmptable[0x87] = &cf.add_a_to_a;
         jmptable[0x88] = &cf.add_b_cy_a_to_a;
         jmptable[0x90] = &cf.subtract_b_from_a;
+        jmptable[0x92] = &cf.subtract_d_from_a;
         jmptable[0x95] = &cf.subtract_l_from_a;
         jmptable[0x98] = &cf.subtract_a_b_cf;
         jmptable[0xA0] = &cf.and_b_with_a;
@@ -778,9 +788,12 @@ pub const Cpu = struct {
         extended_jmptable[0x11] = &cf.rotate_left_c;
         extended_jmptable[0x12] = &cf.rotate_left_d;
         extended_jmptable[0x1A] = &cf.rotate_right_d;
+        extended_jmptable[0x1B] = &cf.rotate_right_e;
         extended_jmptable[0x20] = &cf.shift_left_B;
         extended_jmptable[0x23] = &cf.shift_left_e;
         extended_jmptable[0x27] = &cf.shift_left_a;
+        extended_jmptable[0x2A] = &cf.shift_right_d;
+        extended_jmptable[0x36] = &cf.swap_indirect_hl;
         extended_jmptable[0x37] = &cf.swap_a;
         extended_jmptable[0x3f] = &cf.shift_right_a;
         extended_jmptable[0x42] = &cf.copy_compl_dbit0_to_z;
@@ -790,6 +803,7 @@ pub const Cpu = struct {
         extended_jmptable[0x4f] = &cf.copy_compl_abit1_to_z;
         extended_jmptable[0x56] = &cf.copy_compl_indirect_hl_bit2_to_z;
         extended_jmptable[0x57] = &cf.copy_compl_abit2_to_z;
+        extended_jmptable[0x5E] = &cf.copy_compl_indirect_hl_bit3_to_z;
         extended_jmptable[0x66] = &cf.copy_compl_indirect_hl_bit4_to_z;
         extended_jmptable[0x6f] = &cf.copy_compl_abit5_to_z;
         extended_jmptable[0x76] = &cf.copy_compl_indirect_hl_bit6_to_z;
@@ -801,6 +815,7 @@ pub const Cpu = struct {
         extended_jmptable[0x8F] = &cf.reset_a_bit1;
         extended_jmptable[0x96] = &cf.reset_indirect_hl_bit2;
         extended_jmptable[0x97] = &cf.reset_a_bit2;
+        extended_jmptable[0x9E] = &cf.reset_indirect_hl_bit3;
         extended_jmptable[0xA6] = &cf.reset_indirecthl_bit4;
         extended_jmptable[0xAE] = &cf.reset_indirecthl_bit5;
         extended_jmptable[0xAF] = &cf.reset_a_bit5;
@@ -1075,7 +1090,9 @@ pub const Cpu = struct {
                 //0x59d8,
                 //0x55d6,
                 //0x4086,
-                0x538a,
+                //0x5219,
+                //0x58de,
+                //0x565f,
             };
             //const watched_pcs = [_]u16{};
             //const watched_pc = 0xFFFF;
@@ -1085,9 +1102,11 @@ pub const Cpu = struct {
             if (self.enable_trace)
                 self.print_trace();
         }
+        // if (self.pc == 0x53cd) {
+        //     @breakpoint();
+        // }
 
         const instruction = self.fetch();
-        const initialHL = self.r.f.HL;
         var cycles: mcycles = 0;
 
         if (instruction == 0xCB) {
@@ -1104,14 +1123,7 @@ pub const Cpu = struct {
                 std.debug.panic("Error decoding and executing opcode 0x{x:02}\n", .{instruction});
             };
         }
-        const afterHL = self.r.f.HL;
-        if (initialHL != afterHL and afterHL == 0x64f8) {
-            //@breakpoint();
-            std.debug.print("HL wirtten with {x}\n", .{afterHL});
-        }
-        if (self.pc == 0x614a) {
-            //@breakpoint();
-        }
+
         return cycles;
     }
 
@@ -1262,6 +1274,7 @@ const Gpu = struct {
     //scanline: u8,
     ram: []u8,
     bus: *Bus,
+    dbg_frame_count: u32,
 
     ly: u8,
     lyc: u8,
@@ -1311,6 +1324,7 @@ const Gpu = struct {
         return Gpu{
             .ram = ram,
             .bus = bus,
+            .dbg_frame_count = 0,
             .mode = 2,
             .mode_clocks = 0,
             .ly = 0,
@@ -1354,6 +1368,7 @@ const Gpu = struct {
                     check_lyc(self);
                     if (self.lcd_status.mode == 1) { //Start V-Blank
                         self.bus.raise_cpu_interrupt(Cpu.Interrup.VBlank);
+                        self.dbg_frame_count += 1;
                         return GpuStepResult.FrameReady;
                     }
                 }
@@ -1406,8 +1421,13 @@ const Gpu = struct {
 
         self.visibleSpritesCount = 0;
         for (sprite_aatribute) |value| {
-            if (value.y > self.ly) continue;
-            if (value.y + sprite_height <= self.ly) continue;
+            if (value.y == 0 or value.y >= 160) continue; //hidden objects
+            const sprite_data_y: i16 = @intCast(value.y);
+            const sprite_top: i16 = @intCast(sprite_data_y - 16);
+            const sprite_bottom = sprite_top + sprite_height;
+
+            if (sprite_top > self.ly) continue;
+            if (sprite_bottom <= self.ly) continue;
 
             self.visibleSprites[self.visibleSpritesCount] = value;
             self.visibleSpritesCount += 1;
@@ -1435,6 +1455,7 @@ const Gpu = struct {
         //std.debug.assert(self.lcd_control.bg_and_window_tile_select == true);
 
         //Draw BG
+        //This code is horrible, I need to re-write it!
         const bg_map_1 = if (self.lcd_control.bg_tilemap_display_select == false) self.ram[0x9800..0x9BFF] else self.ram[0x9C00..0x9FFF];
         for (bg_map_1, 0..) |tile_index, i| {
             const tile_x = i % 32;
@@ -1443,21 +1464,28 @@ const Gpu = struct {
             const tile = tile_data[tile_index_mapped];
 
             const scrolled_y = (self.ly + self.scroll_y) % 255;
-            //const scrolled_y = self.ly;
 
             if (tile_y * tile_height > scrolled_y or tile_y * tile_height + tile_height <= scrolled_y) continue; //TODO: optimize so we dont have to check and continue here
             if (tile_x * tile_width > RESOLUTION_WIDTH) continue;
 
             const y: u8 = scrolled_y % tile_height;
-
             for (0..tile_width) |x| {
                 const framebuffer_x = tile_x * 8 + x;
-                if (framebuffer_x >= RESOLUTION_WIDTH) break;
+                const scrolled_framebuffer_x: i16 = @as(i16, @intCast(framebuffer_x)) - @as(i16, @intCast(self.scroll_x));
+
+                if (scrolled_framebuffer_x < 0 and self.scroll_x + RESOLUTION_WIDTH > 255) { //deal with wrapped camera
+                    const wrapped = self.scroll_x + RESOLUTION_WIDTH % 255;
+                    if (scrolled_framebuffer_x >= wrapped) continue;
+                } else {
+                    if (scrolled_framebuffer_x < 0 or scrolled_framebuffer_x >= RESOLUTION_WIDTH) break;
+                }
+
                 const color_index = tile.get_pixel_color_index(@intCast(x), y);
+
                 //const palette_table = if (sprite.flags.pallete == 0) self.ram[0xFF48] else self.ram[0xFF49];
                 //const shade: u2 = @intCast((palette_table >> (color_index * 2)) & 0b11);
                 //if (shade == 0) continue; //transparency
-                const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + framebuffer_x;
+                const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + @as(usize, @intCast(scrolled_framebuffer_x));
                 if (framebuffer_index >= self.framebuffer.len)
                     break;
                 self.framebuffer[framebuffer_index] = shades[self.getBackgroundColor(color_index)];
@@ -1467,24 +1495,45 @@ const Gpu = struct {
         //Draw Window
 
         //draw sprites
+        if (self.dbg_frame_count == 910) {
+            //@breakpoint();
+        }
         const sprite_width = 8;
         for (0..RESOLUTION_WIDTH) |index| {
             const i: u8 = @intCast(index);
+            const scrolled_x = self.scroll_x + i % 255;
+            const scrolled_y = self.scroll_y + self.ly % 255;
+
             for (0..self.visibleSpritesCount) |si| {
                 const sprite = self.visibleSprites[si];
                 //TODO: handle priority and x-ordering
-                if (sprite.x > i or sprite.x + sprite_width <= i) continue;
-                const sprite_x: u8 = i - sprite.x;
-                const sprite_y: u8 = self.ly - sprite.y;
+                const sprite_left_x: i16 = (@as(i16, @intCast(sprite.x)) - 8);
+                const sprite_right = (sprite_left_x + sprite_width);
+                if (sprite_left_x > scrolled_x or sprite_right <= scrolled_x) continue;
+                const sprite_y: i16 = scrolled_y - (@as(i16, @intCast(sprite.y)) - 16);
+                const sprite_x: u8 = @as(u8, @intCast(scrolled_x - sprite_left_x));
                 const sprite_pattern = tile_data[sprite.tile_index];
-                const color_index = sprite_pattern.get_pixel_color_index(sprite_x, sprite_y);
-                const palette_table = if (sprite.flags.pallete == 0) self.ram[0xFF48] else self.ram[0xFF49];
+                const color_index = sprite_pattern.get_pixel_color_index(sprite_x, @as(u8, @intCast(sprite_y)));
+                if (color_index == 0) continue; //transparent
+                const palette_table = if (sprite.flags.pallete == 0) self.object_palette[0] else self.object_palette[1];
 
-                const shift_pallete_by: u3 = @as(u3, color_index) * 2;
-                const palette_table_shifted: u8 = palette_table >> shift_pallete_by;
-                const shade: u2 = @intCast(palette_table_shifted & 0b11);
+                var shade: u2 = 0;
+                switch (color_index) {
+                    0 => {
+                        unreachable;
+                    },
+                    1 => {
+                        shade = palette_table.color1;
+                    },
+                    2 => {
+                        shade = palette_table.color2;
+                    },
+                    3 => {
+                        shade = palette_table.color3;
+                    },
+                }
 
-                if (shade == 0) continue; //transparency
+                //if (shade == 0) continue; //transparency
                 const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + index;
                 self.framebuffer[framebuffer_index] = shades[shade];
             }
@@ -1499,7 +1548,7 @@ const Gpu = struct {
         const fb_width = tiles_colum * 8;
 
         const sprite_table = self.ram[0x8000..0x97FF];
-        const sprite_data = sliceCast(SpriteData, sprite_table, 0, 0xFF);
+        const sprite_data = sliceCast(SpriteData, sprite_table, 0, 0xFF + 0xF);
         const shades = [_]u8{ 0, 63, 128, 255 };
         for (sprite_data, 0..) |sprite, si| {
             const fbGrid_x = si % tiles_colum;

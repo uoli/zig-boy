@@ -108,7 +108,7 @@ pub fn add8(cpu: *Cpu, dest: *u8, src: u8) !mcycles {
 }
 
 pub fn sub8(cpu: *Cpu, dest: *u8, src: u8) !mcycles {
-    dest.* -= src;
+    dest.* -%= src;
     cpu.r.s.f.z = if (dest.* == 0) 1 else 0;
     cpu.r.s.f.n = 1;
     cpu.r.s.f.h = if ((dest.* & 0x0F) < (src & 0x0F)) 1 else 0;
@@ -404,8 +404,18 @@ pub fn load_hl_indirect_to_a(cpu: *Cpu) !mcycles {
     return 2;
 }
 
+pub fn load_indirect_hl_to_b(cpu: *Cpu) !mcycles {
+    cpu.r.s.b = cpu.load(cpu.r.f.HL);
+    return 2;
+}
+
 pub fn load_indirect_hl_to_d(cpu: *Cpu) !mcycles {
     cpu.r.s.d = cpu.load(cpu.r.f.HL);
+    return 2;
+}
+
+pub fn load_indirect_hl_to_e(cpu: *Cpu) !mcycles {
+    cpu.r.s.e = cpu.load(cpu.r.f.HL);
     return 2;
 }
 
@@ -415,6 +425,10 @@ pub fn add_a_to_b(cpu: *Cpu) !mcycles {
 
 pub fn add_a_to_c(cpu: *Cpu) !mcycles {
     return add8(cpu, &cpu.r.s.a, cpu.r.s.c);
+}
+
+pub fn add_a_to_d(cpu: *Cpu) !mcycles {
+    return add8(cpu, &cpu.r.s.a, cpu.r.s.d);
 }
 
 pub fn add_a_to_e(cpu: *Cpu) !mcycles {
@@ -476,6 +490,10 @@ pub fn subtract_a_b_cf(cpu: *Cpu) !mcycles {
 
 pub fn subtract_b_from_a(cpu: *Cpu) !mcycles {
     return sub8(cpu, &cpu.r.s.a, cpu.r.s.b);
+}
+
+pub fn subtract_d_from_a(cpu: *Cpu) !mcycles {
+    return sub8(cpu, &cpu.r.s.a, cpu.r.s.d);
 }
 
 pub fn load_d16_to_sp(cpu: *Cpu) !mcycles {
@@ -690,6 +708,11 @@ pub fn load_indirectDE_to_a(cpu: *Cpu) !mcycles {
     cpu.r.s.a = cpu.load(cpu.r.f.DE);
     return 2;
 }
+
+pub fn inc_e(cpu: *Cpu) !mcycles {
+    return inc_8(cpu, &cpu.r.s.e);
+}
+
 pub fn dec_e(cpu: *Cpu) !mcycles {
     return dec_8(cpu, &cpu.r.s.e);
 }
@@ -991,6 +1014,11 @@ pub fn rotate_right_d(cpu: *Cpu) !mcycles {
     return 2;
 }
 
+pub fn rotate_right_e(cpu: *Cpu) !mcycles {
+    rotate_r(cpu, &cpu.r.s.e);
+    return 2;
+}
+
 pub fn shift_register_left(cpu: *Cpu, reg: *u8) mcycles {
     const bit7 = reg.* & bitmasks[7];
     reg.* = reg.* << 1;
@@ -1001,9 +1029,10 @@ pub fn shift_register_left(cpu: *Cpu, reg: *u8) mcycles {
     return 2;
 }
 
-pub fn shift_register_right(cpu: *Cpu, reg: *u8) mcycles {
+pub fn shift_register_right_keep_bit_7(cpu: *Cpu, reg: *u8) mcycles {
     const bit0 = reg.* & 0b1;
-    reg.* = reg.* >> 1;
+    const bit7 = (reg.* & 0b10000000);
+    reg.* = bit7 | reg.* >> 1;
     cpu.r.s.f.z = if (reg.* == 0) 1 else 0;
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 0;
@@ -1024,17 +1053,32 @@ pub fn shift_left_e(cpu: *Cpu) !mcycles {
 }
 
 pub fn shift_right_a(cpu: *Cpu) !mcycles {
-    return shift_register_right(cpu, &cpu.r.s.a);
+    return shift_register_right_keep_bit_7(cpu, &cpu.r.s.a);
 }
 
-pub fn swap_a(cpu: *Cpu) !mcycles {
-    const a = cpu.r.s.a;
-    cpu.r.s.a = (a & 0xF0) >> 4 | (a & 0x0F) << 4;
+pub fn shift_right_d(cpu: *Cpu) !mcycles {
+    return shift_register_right_keep_bit_7(cpu, &cpu.r.s.d);
+}
+
+fn swap(cpu: *Cpu, reg: *u8) mcycles {
+    const a = reg.*;
+    reg.* = (a & 0xF0) >> 4 | (a & 0x0F) << 4;
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 0;
     cpu.r.s.f.c = 0;
-    return 1;
+    return 2;
+}
+
+pub fn swap_indirect_hl(cpu: *Cpu) !mcycles {
+    var hl_content = cpu.load(cpu.r.f.HL);
+    const cycles = swap(cpu, &hl_content);
+    cpu.store(cpu.r.f.HL, hl_content);
+    return 2 + cycles;
+}
+
+pub fn swap_a(cpu: *Cpu) !mcycles {
+    return swap(cpu, &cpu.r.s.a);
 }
 
 pub fn copy_compl_dbit0_to_z(cpu: *Cpu) !mcycles {
@@ -1082,6 +1126,11 @@ pub fn copy_compl_indirect_hl_bit1_to_z(cpu: *Cpu) !mcycles {
 pub fn copy_compl_indirect_hl_bit2_to_z(cpu: *Cpu) !mcycles {
     const value = cpu.load(cpu.r.f.HL);
     return 1 + copy_compl_rbitN_to_z(cpu, value, 2);
+}
+
+pub fn copy_compl_indirect_hl_bit3_to_z(cpu: *Cpu) !mcycles {
+    const value = cpu.load(cpu.r.f.HL);
+    return 1 + copy_compl_rbitN_to_z(cpu, value, 3);
 }
 
 pub fn copy_compl_indirect_hl_bit4_to_z(cpu: *Cpu) !mcycles {
@@ -1138,6 +1187,12 @@ pub fn reset_indirect_hl_bit0(cpu: *Cpu) !mcycles {
 
 pub fn reset_indirect_hl_bit2(cpu: *Cpu) !mcycles {
     const new_val = cpu.load(cpu.r.f.HL) & inv_bitmasks[2];
+    cpu.store(cpu.r.f.HL, new_val);
+    return 4;
+}
+
+pub fn reset_indirect_hl_bit3(cpu: *Cpu) !mcycles {
+    const new_val = cpu.load(cpu.r.f.HL) & inv_bitmasks[3];
     cpu.store(cpu.r.f.HL, new_val);
     return 4;
 }
