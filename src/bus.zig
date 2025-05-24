@@ -113,7 +113,7 @@ pub const Bus = struct {
                 if (intialStatus != self.gpu.lcd_control.lcd_display_enable and self.gpu.lcd_control.lcd_display_enable) {
                     self.gpu.ly = 0;
                     self.gpu.mode = 0;
-                    self.gpu.mode_clocks = 0;
+                    self.gpu.mode_clocks = 1; //Not sure why 1, but it seems to make timing aligned with Higan...
                 }
             },
             0xFF41 => {

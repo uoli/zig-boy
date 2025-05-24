@@ -32,7 +32,7 @@ fn inc_8(cpu: *Cpu, reg: *u8) mcycles {
     reg.* +%= 1;
     cpu.r.s.f.z = if (reg.* == 0) 1 else 0;
     cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = if ((reg.* & 0xFF) == 0) 1 else 0; //verify this
+    cpu.r.s.f.h = if ((reg.* & 0xF) == 0) 1 else 0; //verify this
     return 1;
 }
 
@@ -109,11 +109,13 @@ pub fn add8(cpu: *Cpu, dest: *u8, src: u8) !mcycles {
 }
 
 pub fn sub8(cpu: *Cpu, dest: *u8, src: u8) mcycles {
+    const halfsub = (dest.* & 0x0F) -% (src & 0x0F);
+    const original_val = dest.*;
     dest.* -%= src;
     cpu.r.s.f.z = if (dest.* == 0) 1 else 0;
     cpu.r.s.f.n = 1;
-    cpu.r.s.f.h = if ((dest.* & 0x0F) < (src & 0x0F)) 1 else 0;
-    cpu.r.s.f.c = if (dest.* < src) 1 else 0;
+    cpu.r.s.f.h = if (halfsub > 0x0F) 1 else 0;
+    cpu.r.s.f.c = if (original_val < src) 1 else 0;
     return 1;
 }
 
@@ -446,10 +448,11 @@ pub fn add_a_d8(cpu: *Cpu) !mcycles {
 
 pub fn add_a_to_hl_indirect(cpu: *Cpu) !mcycles {
     const val = cpu.load(cpu.r.f.HL);
+    const halfadd = (cpu.r.s.a & 0x0F) + (val & 0x0F);
     cpu.r.s.a, cpu.r.s.f.c = @addWithOverflow(cpu.r.s.a, val);
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
     cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) + (val & 0x0F) > 0xF) 1 else 0; //TODO: find simpler way?
+    cpu.r.s.f.h = if (halfadd > 0xF) 1 else 0; //TODO: find simpler way?
 
     return 2;
 }

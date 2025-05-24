@@ -35,7 +35,7 @@ pub fn compare_traces(path_a: []const u8, path_b: []const u8) !bool {
     var buf_b: [1024]u8 = undefined;
     var current_line_number_a: usize = 0;
     var current_line_number_b: usize = 0;
-    const ignored_lines = [_]usize{35196, 35197,35198};
+    const ignored_lines = [_]usize{};
     while (true) {
         const trace_data_a, const line_a = try read_line_until_parse_or_eof(reader_a, buf_a[0..], &extract_trace_mine, &current_line_number_a);
         const trace_data_b, const line_b = try read_line_until_parse_or_eof(reader_b, buf_b[0..], &extract_trace_higan, &current_line_number_b);
@@ -60,13 +60,13 @@ pub fn compare_traces(path_a: []const u8, path_b: []const u8) !bool {
 }
 
 fn contains(comptime T: type, haystack: []const T, needle: T) bool {
-        for (haystack) |item| {
-            if (item == needle) {
-                return true;
-            }
+    for (haystack) |item| {
+        if (item == needle) {
+            return true;
         }
-        return false;
     }
+    return false;
+}
 
 fn read_line_until_parse_or_eof(reader: anytype, buf: []u8, fn_extract_trace: *const fn (line: []const u8) ParsedTraceData, current_line_number: *usize) !struct { TraceData, []u8 } {
     while (true) {
