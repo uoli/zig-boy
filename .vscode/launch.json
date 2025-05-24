@@ -16,6 +16,15 @@
         {
             "type": "cppvsdbg",
             "request": "launch",
+            "name": "Debug tools",
+            "program": "${workspaceFolder}/zig-out/bin/tools.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "zig build"
+        },
+        {
+            "type": "cppvsdbg",
+            "request": "launch",
             "name": "trace",
             "program": "${workspaceFolder}/zig-out/bin/zig_hello_world.exe",
             "args": [],

@@ -352,7 +352,7 @@ pub const Cpu = struct {
             .disable_boot_rom = 0,
             .bus = bus,
             .r = Registers.init(),
-            .sp = 0xFFFE,
+            .sp = 0x0,
             .pc = 0x0,
             .halted = false,
             .enable_trace = false,
@@ -600,10 +600,12 @@ pub const Cpu = struct {
     fn decode_and_execute(self: *Cpu) mcycles {
         {
             const watched_pcs = [_]u16{
+                0x0000,
                 //0x0100,
                 //0x60a7,
                 //0x6155,
                 //0x0171,
+
                 //0x1dd1,
                 //0x4e4b,
                 //0x59d8,
@@ -670,8 +672,7 @@ pub const Cpu = struct {
     }
 
     fn execute_interrupt(self: *Cpu, interrupt_address: u16) mcycles {
-        std.debug.print("Interrupt 0x{x}\n", .{interrupt_address});
-        self.interrupt.enabled = false;
+        Logger.log("Interrupt 0x{x}\n", .{interrupt_address});
         self.push16(self.pc);
         self.pc = interrupt_address;
         return 5;
@@ -713,6 +714,7 @@ pub const Cpu = struct {
             const current_interrupts_bitfield: u8 = @bitCast(self.interrupt.interrupt_flag);
             const interrupts_to_execute_bitfield: u8 = enabled_interrupts_bitfield & current_interrupts_bitfield;
             if (interrupts_to_execute_bitfield & mask[0] != 0) {
+                self.interrupt.enabled = false;
                 self.interrupt.interrupt_flag = @bitCast(current_interrupts_bitfield & ~mask[0]);
                 return self.execute_interrupt(mask[1]);
             }
@@ -750,8 +752,7 @@ pub const Cpu = struct {
             },
             .None => {},
         }
-
-        std.debug.print("[CPU] 0x{x:04} 0x{x:02} {s: <12}{s} AF:0x{x:04} BC:0x{x:04} DE:0x{x:04} HL:0x{x:04} SP:0x{x:04} {s}\n", .{ self.pc, opInfo.code, opInfo.name, args_str, self.r.f.AF, self.r.f.BC, self.r.f.DE, self.r.f.HL, self.sp, self.r.debug_flag_str() });
+        Logger.log("[CPU] 0x{x:04} 0x{x:02} {s: <12}{s} AF:0x{x:04} BC:0x{x:04} DE:0x{x:04} HL:0x{x:04} SP:0x{x:04} {s}\n", .{ self.pc, opInfo.code, opInfo.name, args_str, self.r.f.AF, self.r.f.BC, self.r.f.DE, self.r.f.HL, self.sp, self.r.debug_flag_str() });
     }
 };
 
@@ -760,6 +761,7 @@ const tracy = @import("tracy");
 const bus_import = @import("bus.zig");
 const cpu_utils = @import("cpu_utils.zig");
 const cpu_opcode_matadata_gen = @import("cpu_opcode_matadata_gen");
+const Logger = @import("logger.zig");
 
 const Bus = bus_import.Bus;
 const OpCodeInfo = cpu_utils.OpCodeInfo;

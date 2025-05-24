@@ -85,6 +85,16 @@ pub fn build(b: *std.Build) void {
     // file path. In this case, we set up `exe_mod` to import `lib_mod`.
     exe_mod.addImport("zig_hello_world_lib", lib_mod);
 
+    const tool_exe_mod = b.createModule(.{
+        // `root_source_file` is the Zig "entry point" of the module. If a module
+        // only contains e.g. external object files, you can make this `null`.
+        // In this case the main source file is merely a path, however, in more
+        // complicated build scripts, this could be a generated file.
+        .root_source_file = b.path("tools/compare_traces.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Now, we will create a static library based on the module we created above.
     // This creates a `std.Build.Step.Compile`, which is the build step responsible
     // for actually invoking the compiler.
@@ -127,6 +137,15 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
+
+    const tools_exe = b.addExecutable(.{
+        .name = "tools",
+        .root_module = tool_exe_mod,
+    });
+    b.installArtifact(tools_exe);
+    const tool_run_cmd = b.addRunArtifact(tools_exe);
+    const run_tool_step_a = b.step("run_tool", "Run the tool");
+    run_tool_step_a.dependOn(&tool_run_cmd.step);
 
     // This creates a build step. It will be visible in the `zig build --help` menu,
     // and can be selected like this: `zig build run`

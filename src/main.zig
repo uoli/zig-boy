@@ -11,9 +11,13 @@ fn load_rom(abs_rom_location: []const u8, max_bytes: usize, allocator: Allocator
 
     return cartridge_rom;
 }
+
 pub fn main() !void {
     tracy.setThreadName("Main");
     defer tracy.message("Graceful main thread exit");
+
+    Logger.init();
+    defer Logger.deinit();
 
     //  Get an allocator
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -60,6 +64,7 @@ pub fn main() !void {
         return error.SDLInitializationFailed;
     };
     defer c.SDL_DestroyRenderer(renderer);
+    _ = c.SDL_GL_SetSwapInterval(0);
 
     var quit = false;
 
@@ -122,7 +127,7 @@ pub fn main() !void {
         const target_frame_time_ms = 16;
         const delta_time_ms = (try std.time.Instant.now()).since(prev_time) / std.time.ns_per_ms;
         if (delta_time_ms < target_frame_time_ms) {
-            c.SDL_Delay(target_frame_time_ms - @as(u32, @intCast(delta_time_ms)));
+            //c.SDL_Delay(target_frame_time_ms - @as(u32, @intCast(delta_time_ms)));
         }
     }
 }
@@ -265,6 +270,7 @@ const cpu_import = @import("cpu.zig");
 const bus_import = @import("bus.zig");
 const gpu_import = @import("gpu.zig");
 const cartridge_import = @import("cartridge.zig");
+const Logger = @import("logger.zig");
 const Bus = bus_import.Bus;
 const Cpu = cpu_import.Cpu;
 const Gpu = gpu_import.Gpu;

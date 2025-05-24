@@ -100,7 +100,8 @@ pub const Gpu = struct {
             .window_x = 0,
             .window_y = 0,
             .lcd_status = .{ .mode = 2, .coincidence = false, .mode0_hblank_interrupt = false, .mode_1_vblank_interrupt = false, .mode2_oam_interrupt = false, .coincidence_interrupt = false, ._ = undefined },
-            .lcd_control = @bitCast(@as(u8, 0x91)),
+            //.lcd_control = @bitCast(@as(u8, 0x91)),
+            .lcd_control = @bitCast(@as(u8, 0x0)),
             .background_palette = .{ .color0 = 0, .color1 = 0, .color2 = 0, .color3 = 0 },
             .object_palette = .{ .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 }, .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 } },
         };
@@ -129,6 +130,7 @@ pub const Gpu = struct {
                     self.lcd_status.mode = if (self.ly < 144) 2 else 1;
                     check_lyc(self);
                     if (self.lcd_status.mode == 1) { //Start V-Blank
+                        Logger.log("start vblank frame {d}\n", .{self.dbg_frame_count});
                         self.bus.raise_cpu_interrupt(Cpu.Interrup.VBlank);
                         self.dbg_frame_count += 1;
                         return GpuStepResult.FrameReady;
@@ -395,6 +397,8 @@ const std = @import("std");
 const tracy = @import("tracy");
 const cpu_import = @import("cpu.zig");
 const bus_import = @import("bus.zig");
+const Logger = @import("logger.zig");
+
 
 const Cpu = cpu_import.Cpu;
 const Bus = bus_import.Bus;
