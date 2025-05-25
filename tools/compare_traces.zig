@@ -35,7 +35,19 @@ pub fn compare_traces(path_a: []const u8, path_b: []const u8) !bool {
     var buf_b: [1024]u8 = undefined;
     var current_line_number_a: usize = 0;
     var current_line_number_b: usize = 0;
-    const ignored_lines = [_]usize{};
+    const ignored_lines = [_]usize{2368868, 2368869, 2368870, 2368871, 2368872, 2368873, 2368874, 2368875, 2368876, 2368877, 2368878, 2368879, 2368884, 2368885, 2368886, 2368887, 2368888,};
+    const start_line_a = 2449218; //2437182; //2425148; //2413124; //2401089; //2389053; //2377019; //2376657; //2211599; //
+    const start_line_b = 2449218; //2437182; //2425148; //2413124; //2401089; //2389053; //2377019; //2376703; //2211598; //
+
+    while(current_line_number_a < start_line_a){ 
+        _ = try reader_a.readUntilDelimiterOrEof(buf_a[0..], '\n');
+        current_line_number_a += 1;
+    }
+    while(current_line_number_b < start_line_b){ 
+        _ = try reader_b.readUntilDelimiterOrEof(buf_b[0..], '\n');
+        current_line_number_b += 1;
+    }
+
     while (true) {
         const trace_data_a, const line_a = try read_line_until_parse_or_eof(reader_a, buf_a[0..], &extract_trace_mine, &current_line_number_a);
         const trace_data_b, const line_b = try read_line_until_parse_or_eof(reader_b, buf_b[0..], &extract_trace_higan, &current_line_number_b);
@@ -97,15 +109,15 @@ fn compare_lines(trace_data_a: TraceData, trace_data_b: TraceData) bool {
         return false;
     }
     if (trace_data_a.DE != trace_data_b.DE) {
-        std.debug.print("BC: 0x{x} != 0x{x}\n", .{ trace_data_a.DE, trace_data_b.DE });
+        std.debug.print("DE: 0x{x} != 0x{x}\n", .{ trace_data_a.DE, trace_data_b.DE });
         return false;
     }
     if (trace_data_a.HL != trace_data_b.HL) {
-        std.debug.print("BC: 0x{x} != 0x{x}\n", .{ trace_data_a.HL, trace_data_b.HL });
+        std.debug.print("HL: 0x{x} != 0x{x}\n", .{ trace_data_a.HL, trace_data_b.HL });
         return false;
     }
     if (trace_data_a.SP != trace_data_b.SP) {
-        std.debug.print("BC: 0x{x} != 0x{x}\n", .{ trace_data_a.SP, trace_data_b.SP });
+        std.debug.print("SP: 0x{x} != 0x{x}\n", .{ trace_data_a.SP, trace_data_b.SP });
         return false;
     }
     return true;

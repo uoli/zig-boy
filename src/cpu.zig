@@ -108,11 +108,6 @@ pub const Cpu = struct {
         P15_Select_Button: JoypadSelectState,
         _: u2,
     },
-    dma: struct {
-        requested: bool,
-        source: u16,
-        cycles_remaining: u8,
-    },
     sound_flags: packed struct {
         sound_1_enabled: u1,
         sound_2_enabled: u1,
@@ -397,12 +392,7 @@ pub const Cpu = struct {
                 .P13_Down_or_Start = JoypadButtonFlagState.NotPressed,
                 .P14_Select_Direction = JoypadSelectState.NotSelected,
                 .P15_Select_Button = JoypadSelectState.NotSelected,
-                ._ = 0,
-            },
-            .dma = .{
-                .requested = false,
-                .source = 0x00,
-                .cycles_remaining = 0,
+                ._ = 3,
             },
             .sound_flags = .{
                 .sound_1_enabled = 0,
@@ -485,9 +475,6 @@ pub const Cpu = struct {
             0xFF26 => {
                 self.sound_flags = @bitCast(value);
             },
-            0xFF46 => {
-                self.request_dma_transfer(value);
-            },
             0xFF50 => {
                 self.disable_boot_rom = value;
             },
@@ -503,31 +490,6 @@ pub const Cpu = struct {
         }
     }
 
-    fn request_dma_transfer(self: *Cpu, addr_base_req: u8) void {
-        self.dma.requested = true;
-        var addr_base = addr_base_req;
-        if (addr_base == 0xfe) addr_base = 0xde;
-        if (addr_base == 0xff) addr_base = 0xdf;
-        self.dma.source = addr_base;
-        self.dma.source = self.dma.source << 8;
-        self.dma.cycles_remaining = 160;
-    }
-
-    fn handle_dma(self: *Cpu, cycles_elapsed: mcycles) void {
-        if (self.dma.requested == false) return;
-        for (0x00..0x9F + 1) |value| {
-            const value16: u16 = @intCast(value);
-            const source: u16 = self.dma.source + value16;
-            const dest: u16 = 0xFE00 + value16;
-            self.bus.write(dest, self.bus.read(source));
-        }
-        if (self.dma.cycles_remaining < cycles_elapsed) {
-            self.dma.cycles_remaining = 0;
-            self.dma.requested = false;
-        } else {
-            self.dma.cycles_remaining -= @intCast(cycles_elapsed);
-        }
-    }
 
     fn tick_timer(self: *Cpu, cycles_elapsed: mcycles) void {
         //main clock = 4194304 hz in t-cycles
@@ -657,7 +619,6 @@ pub const Cpu = struct {
 
         var clocks = execute_interrupts_if_enabled(self);
         clocks += self.decode_and_execute();
-        self.handle_dma(clocks);
         self.tick_timer(clocks);
         self.cycles_counter += clocks;
         return clocks;

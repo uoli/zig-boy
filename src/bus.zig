@@ -108,13 +108,7 @@ pub const Bus = struct {
                 self.ram[address] = value;
             },
             0xFF40 => {
-                const intialStatus = self.gpu.lcd_control.lcd_display_enable;
-                self.gpu.lcd_control = @bitCast(value);
-                if (intialStatus != self.gpu.lcd_control.lcd_display_enable and self.gpu.lcd_control.lcd_display_enable) {
-                    self.gpu.ly = 0;
-                    self.gpu.mode = 0;
-                    self.gpu.mode_clocks = 1; //Not sure why 1, but it seems to make timing aligned with Higan...
-                }
+                self.gpu.set_lcdc(value);
             },
             0xFF41 => {
                 self.gpu.lcd_status = @bitCast(value);
@@ -124,6 +118,9 @@ pub const Bus = struct {
             },
             0xFF43 => {
                 self.gpu.scroll_x = value;
+            },
+            0xFF46 => {
+                self.gpu.request_dma_transfer(value);
             },
             0xFF47 => {
                 self.gpu.background_palette = @bitCast(value);

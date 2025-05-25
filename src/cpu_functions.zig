@@ -980,7 +980,7 @@ pub fn disable_interrupts(cpu: *Cpu) !mcycles {
 }
 
 pub fn enable_interrupts(cpu: *Cpu) !mcycles {
-    //TODO: this needs to be delayed by 1 instruction
+    //this needs to be delayed by 1 instruction
     cpu.interrupt.enabled = true;
     cpu.interrupt.enable_delay_instructons = 1;
     return 1;

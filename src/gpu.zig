@@ -44,6 +44,7 @@ pub const Gpu = struct {
     scroll_y: u8,
     window_x: u8,
     window_y: u8,
+    initializing_extra_steps: u8,
     lcd_status: packed struct {
         mode: u2,
         coincidence: bool,
@@ -75,6 +76,11 @@ pub const Gpu = struct {
         color2: u2,
         color3: u2,
     },
+    dma: struct {
+        requested: bool,
+        source: u16,
+        cycles_remaining: u8,
+    },
 
     visibleSprites: [10]SpriteAttribute,
     visibleSpritesCount: usize,
@@ -100,11 +106,56 @@ pub const Gpu = struct {
             .window_x = 0,
             .window_y = 0,
             .lcd_status = .{ .mode = 2, .coincidence = false, .mode0_hblank_interrupt = false, .mode_1_vblank_interrupt = false, .mode2_oam_interrupt = false, .coincidence_interrupt = false, ._ = undefined },
+            .initializing_extra_steps = 0,
             //.lcd_control = @bitCast(@as(u8, 0x91)),
             .lcd_control = @bitCast(@as(u8, 0x0)),
             .background_palette = .{ .color0 = 0, .color1 = 0, .color2 = 0, .color3 = 0 },
             .object_palette = .{ .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 }, .{ ._ = 0, .color1 = 0, .color2 = 0, .color3 = 0 } },
+            .dma = .{
+                .requested = false,
+                .source = 0x00,
+                .cycles_remaining = 0,
+            },
         };
+    }
+
+    pub fn set_lcdc(self: *Gpu, value: u8) void {
+        const intialStatus = self.lcd_control.lcd_display_enable;
+        self.lcd_control = @bitCast(value);
+        if (intialStatus != self.lcd_control.lcd_display_enable) {
+            self.ly = 0;
+            self.mode = 2;
+            self.mode_clocks = 1;
+            // if (self.lcd_control.lcd_display_enable) {
+            //     self.initializing_extra_steps = 1;
+            // }
+        }
+    }
+    
+    pub fn request_dma_transfer(self: *Gpu, addr_base_req: u8) void {
+        self.dma.requested = true;
+        var addr_base = addr_base_req;
+        if (addr_base == 0xfe) addr_base = 0xde;
+        if (addr_base == 0xff) addr_base = 0xdf;
+        self.dma.source = addr_base;
+        self.dma.source = self.dma.source << 8;
+        self.dma.cycles_remaining = 160;
+    }
+
+    fn handle_dma(self: *Gpu, cycles_elapsed: mcycles) void {
+        if (self.dma.requested == false) return;
+        for (0x00..0x9F + 1) |value| {
+            const value16: u16 = @intCast(value);
+            const source: u16 = self.dma.source + value16;
+            const dest: u16 = 0xFE00 + value16;
+            self.bus.write(dest, self.bus.read(source));
+        }
+        if (self.dma.cycles_remaining < cycles_elapsed) {
+            self.dma.cycles_remaining = 0;
+            self.dma.requested = false;
+        } else {
+            self.dma.cycles_remaining -= @intCast(cycles_elapsed);
+        }
     }
 
     const OAM_CLOCKS = 20;
@@ -119,8 +170,22 @@ pub const Gpu = struct {
     pub fn step(self: *Gpu, cpuClocks: mcycles) GpuStepResult {
         const zone = tracy.beginZone(@src(), .{ .name = "gpu step" });
         defer zone.end();
+
+        self.handle_dma(cpuClocks);
+
         if (!self.lcd_control.lcd_display_enable) return GpuStepResult.Disabled;
         self.mode_clocks += cpuClocks;
+
+        // if(self.initializing_extra_steps > 0) {
+        //     if (self.mode_clocks >= self.initializing_extra_steps) {
+        //         self.mode_clocks %= self.initializing_extra_steps;
+        //         self.initializing_extra_steps = 0;
+        //         self.lcd_status.mode = 2;
+        //     } else {
+        //          return GpuStepResult.Disabled;
+        //     }
+        // }
+
         switch (self.lcd_status.mode) {
             0 => { //H-Blank
                 if (self.mode_clocks >= HBLANK_CLOKS) {
