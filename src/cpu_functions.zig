@@ -483,7 +483,7 @@ pub fn subtract_l_from_a(cpu: *Cpu) !mcycles {
 
 pub fn subtract_a_b_cf(cpu: *Cpu) !mcycles {
     var val, const overflow1 = @subWithOverflow(cpu.r.s.a, cpu.r.s.b);
-    val, const overflow2 = @subWithOverflow(cpu.r.s.a, cpu.r.s.f.c);
+    val, const overflow2 = @subWithOverflow(val, cpu.r.s.f.c);
     cpu.r.s.a = val;
     cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
     cpu.r.s.f.n = 1;
@@ -982,6 +982,7 @@ pub fn disable_interrupts(cpu: *Cpu) !mcycles {
 pub fn enable_interrupts(cpu: *Cpu) !mcycles {
     //TODO: this needs to be delayed by 1 instruction
     cpu.interrupt.enabled = true;
+    cpu.interrupt.enable_delay_instructons = 1;
     return 1;
 }
 

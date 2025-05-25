@@ -86,7 +86,7 @@ pub const Cpu = struct {
     sp: u16,
     pc: u16,
     halted: bool,
-    interrupt: struct { enabled: bool, interrupt_flag: Interrupts, interrupt_enabled: Interrupts },
+    interrupt: struct { enabled: bool, enable_delay_instructons:u8, interrupt_flag: Interrupts, interrupt_enabled: Interrupts, },
     enable_trace: bool,
     disable_boot_rom: u8,
     timer: struct {
@@ -362,6 +362,7 @@ pub const Cpu = struct {
             .extended_jmptable = extended_jmptable,
             .interrupt = .{
                 .enabled = true,
+                .enable_delay_instructons = 0,
                 .interrupt_enabled = .{
                     .vblank = false,
                     .lcd_stat = false,
@@ -386,7 +387,7 @@ pub const Cpu = struct {
                     .timer_running = false,
                     ._ = undefined,
                 },
-                .divider_register = 0,
+                .divider_register = 0xffe6,
                 .counter = 0,
             },
             .joypad = .{
@@ -432,7 +433,7 @@ pub const Cpu = struct {
                 return @bitCast(self.joypad);
             },
             0xFF04 => {
-                return @truncate(self.timer.divider_register);
+                return @truncate(self.timer.divider_register >> 8);
             },
             0xFF10...0xFF25 => {
                 //No-Impl Sound related I/O ops
@@ -537,7 +538,7 @@ pub const Cpu = struct {
         //timer_clock_3 = 1 -> 16384hz  in t-cycles, 256  times slower
 
         const start_divider_val = self.timer.divider_register;
-        self.timer.divider_register +%= @intCast(cycles_elapsed);
+        self.timer.divider_register +%= @intCast(cycles_elapsed * 4);
 
         if (self.timer.control.timer_running) {
             var counter_increase: u8 = 0;
@@ -701,6 +702,11 @@ pub const Cpu = struct {
         if (!self.interrupt.enabled) {
             return 0;
         }
+        if (self.interrupt.enable_delay_instructons > 0) {
+            self.interrupt.enable_delay_instructons -= 1;
+            return 0;
+        }
+
         const bitMaskToInterrupt = [_]struct { u8, u16 }{
             .{ @intFromEnum(Interrup.VBlank), 0x0040 },
             .{ @intFromEnum(Interrup.LCDStat), 0x0048 },
