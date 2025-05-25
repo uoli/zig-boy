@@ -35,9 +35,9 @@ pub fn compare_traces(path_a: []const u8, path_b: []const u8) !bool {
     var buf_b: [1024]u8 = undefined;
     var current_line_number_a: usize = 0;
     var current_line_number_b: usize = 0;
-    const ignored_lines = [_]usize{};
-    const start_line_a = 2473283; //2461253; //2449218; //2437182; //2425148; //2413124; //2401089; //2389053; //2377019; //2376657; //2211599; //
-    const start_line_b = 2473283; //2461253; //2449218; //2437182; //2425148; //2413124; //2401089; //2389053; //2377019; //2376703; //2211598; //
+    const ignored_lines = [_]usize{2925907, 2925908, 2925912, 2925913};
+    const start_line_a = 2917640; //3169274; //2497355; //2485319; //2473283; //2461253; //2449218; //2437182; //2425148; //2413124; //2401089; //2389053; //2377019; //2376657; //2211599; //
+    const start_line_b = 2917640; //3169271; //2497355; //2485319; //2473283; //2461253; //2449218; //2437182; //2425148; //2413124; //2401089; //2389053; //2377019; //2376703; //2211598; //
 
     while(current_line_number_a < start_line_a){ 
         _ = try reader_a.readUntilDelimiterOrEof(buf_a[0..], '\n');

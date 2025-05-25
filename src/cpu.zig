@@ -615,7 +615,10 @@ pub const Cpu = struct {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
 
-        if (self.halted) return 1;
+        if (self.halted) {
+            self.tick_timer(1);
+            return 1;
+        }
 
         var clocks = execute_interrupts_if_enabled(self);
         clocks += self.decode_and_execute();

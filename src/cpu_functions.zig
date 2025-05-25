@@ -952,15 +952,17 @@ pub fn push_af(cpu: *Cpu) !mcycles {
 }
 
 pub fn add_sp_s8_to_hl(cpu: *Cpu) !mcycles {
-    const s8 = Cpu.fetch(cpu);
+    const s8 = cpu.fetch();
     const hl = cpu.r.f.HL;
-    const result, const overflow = add_u8_as_signed_to_u16(s8, cpu.sp);
+    const result, _ = add_u8_as_signed_to_u16(s8, cpu.sp);
+    const hadd: u8 = @intCast((hl & 0x0F) + (s8 & 0x0F));
+    const cadd: u16 = @intCast((hl & 0xFF) + (s8 & 0xFF));
     cpu.r.f.HL = result;
-    cpu.r.s.f.z = 0;
+    cpu.r.s.f.c = if (cadd > 0xFF) 1 else 0;
+    cpu.r.s.f.h = if (hadd > 0xF) 1 else 0;
     cpu.r.s.f.n = 0;
-    const hadd: i32 = @as(i32, hl) + @as(i32, @intCast(@as(u8, @bitCast(s8))));
-    cpu.r.s.f.h = if (hadd > 0xF or hadd < 0) 1 else 0;
-    cpu.r.s.f.c = if (overflow) 1 else 0;
+    cpu.r.s.f.z = 0;
+    
     return 3;
 }
 
