@@ -460,7 +460,7 @@ pub const Cpu = struct {
             0xFF00 => {
                 //Only bit 5 and 4 are actually writable
                 const currentVal: u8 = @bitCast(self.joypad);
-                const newVal: u8 = currentVal | (value & 0b00110000);
+                const newVal: u8 = (currentVal & 0b11001111) | (value & 0b00110000);
                 self.joypad = @bitCast(newVal);
             },
             0xFF01 => {
