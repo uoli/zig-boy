@@ -31,7 +31,6 @@ pub const GpuStepResult = enum {
 };
 
 pub const Gpu = struct {
-    mode: u2,
     mode_clocks: usize,
     //scanline: u8,
     ram: []u8,
@@ -93,7 +92,6 @@ pub const Gpu = struct {
             .ram = ram,
             .bus = bus,
             .dbg_frame_count = 0,
-            .mode = 2,
             .mode_clocks = 0,
             .ly = 0,
             .lyc = 0,
@@ -124,7 +122,7 @@ pub const Gpu = struct {
         self.lcd_control = @bitCast(value);
         if (intialStatus != self.lcd_control.lcd_display_enable) {
             self.ly = 0;
-            self.mode = 2;
+            self.lcd_status.mode = 2;
             self.mode_clocks = 1;
             // if (self.lcd_control.lcd_display_enable) {
             //     self.initializing_extra_steps = 1;
