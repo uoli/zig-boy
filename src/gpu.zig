@@ -125,7 +125,15 @@ pub const Gpu = struct {
         if (intialStatus != self.lcd_control.lcd_display_enable) {
             self.ly = 0;
             self.mode = 2;
-            self.mode_clocks = 1;
+            self.mode_clocks = if (self.lcd_control.lcd_display_enable) 0 else 1;
+
+            if (self.lcd_control.lcd_display_enable) {
+                check_lyc(self);
+
+            if (self.lcd_status.mode2_oam_interrupt) {
+                self.bus.raise_cpu_interrupt(Cpu.Interrup.LCDStat);
+            }
+            }
             // if (self.lcd_control.lcd_display_enable) {
             //     self.initializing_extra_steps = 1;
             // }
@@ -194,8 +202,15 @@ pub const Gpu = struct {
 
                     self.lcd_status.mode = if (self.ly < 144) 2 else 1;
                     check_lyc(self);
+
+                    if (self.lcd_status.mode == 2 and self.lcd_status.mode2_oam_interrupt) {
+                        self.bus.raise_cpu_interrupt(Cpu.Interrup.LCDStat);
+                    }
                     if (self.lcd_status.mode == 1) { //Start V-Blank
                         Logger.log("start vblank frame {d}\n", .{self.dbg_frame_count});
+                        if (self.lcd_status.mode_1_vblank_interrupt) {
+                            self.bus.raise_cpu_interrupt(Cpu.Interrup.LCDStat);
+                        }
                         self.bus.raise_cpu_interrupt(Cpu.Interrup.VBlank);
                         self.dbg_frame_count += 1;
                         return GpuStepResult.FrameReady;
@@ -208,6 +223,9 @@ pub const Gpu = struct {
                     self.ly += 1;
                     if (self.ly == 154) {
                         self.lcd_status.mode = 2;
+                        if (self.lcd_status.mode2_oam_interrupt) {
+                            self.bus.raise_cpu_interrupt(Cpu.Interrup.LCDStat);
+                        }
                         self.ly = 0;
                     }
                     check_lyc(self);
@@ -224,6 +242,9 @@ pub const Gpu = struct {
                 if (self.mode_clocks >= RASTER_CLOKS) {
                     self.mode_clocks %= RASTER_CLOKS;
                     self.lcd_status.mode = 0;
+                    if (self.lcd_status.mode0_hblank_interrupt) {
+                        self.bus.raise_cpu_interrupt(Cpu.Interrup.LCDStat);
+                    }
                     self.drawscanline();
                 }
             },
@@ -234,8 +255,11 @@ pub const Gpu = struct {
     fn check_lyc(self: *Gpu) void {
         if (self.ly == self.lyc) {
             self.lcd_status.coincidence = true;
-            if (self.lcd_status.coincidence_interrupt)
+        if (self.lcd_status.coincidence_interrupt) {
                 self.bus.raise_cpu_interrupt(Cpu.Interrup.LCDStat);
+        }
+    } else {
+        self.lcd_status.coincidence = false;
         }
     }
 
