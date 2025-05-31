@@ -82,12 +82,17 @@ pub const Cpu = struct {
     boot_rom: []const u8,
     cycles_counter: u64,
     bus: *Bus,
+    tracer: *Tracer,
     r: Registers,
     sp: u16,
     pc: u16,
     halted: bool,
-    interrupt: struct { enabled: bool, enable_delay_instructons:u8, interrupt_flag: Interrupts, interrupt_enabled: Interrupts, },
-    enable_trace: bool,
+    interrupt: struct {
+        enabled: bool,
+        enable_delay_instructons: u8,
+        interrupt_flag: Interrupts,
+        interrupt_enabled: Interrupts,
+    },
     disable_boot_rom: u8,
     timer: struct {
         modulo: u8,
@@ -131,7 +136,7 @@ pub const Cpu = struct {
     extended_opcodetable: [256]OpCodeInfo,
     extended_jmptable: [256]opFunc,
 
-    pub fn init(boot_rom: []const u8, bus: *Bus) Cpu {
+    pub fn init(boot_rom: []const u8, bus: *Bus, tracer: *Tracer) Cpu {
         var opcodetable: [256]OpCodeInfo = undefined;
         var jmptable: [256]opFunc = undefined;
 
@@ -291,7 +296,6 @@ pub const Cpu = struct {
         jmptable[0xFB] = &cf.enable_interrupts;
         jmptable[0xFE] = &cf.compare_immediate8_ra;
 
-
         var extended_opcodetable: [256]OpCodeInfo = undefined;
         var extended_jmptable: [256]opFunc = undefined;
         init_tables(&extended_opcodetable, &extended_jmptable);
@@ -350,7 +354,6 @@ pub const Cpu = struct {
             .sp = 0x0,
             .pc = 0x0,
             .halted = false,
-            .enable_trace = false,
             .opcodetable = opcodetable,
             .jmptable = jmptable,
             .extended_opcodetable = extended_opcodetable,
@@ -411,10 +414,11 @@ pub const Cpu = struct {
                     .transfer_start_flag = false,
                 },
             },
+            .tracer = tracer,
         };
     }
 
-    pub fn load(self: *Cpu, address: u16) u8 {
+    pub fn load(self: Cpu, address: u16) u8 {
         if (self.disable_boot_rom == 0 and address < 0x0100) {
             return self.boot_rom[address];
         }
@@ -438,7 +442,7 @@ pub const Cpu = struct {
         }
     }
 
-    pub fn load16(self: *Cpu, address: u16) u16 {
+    pub fn load16(self: Cpu, address: u16) u16 {
         var result: u16 = 0;
         result += self.load(address);
         result += @as(u16, self.load(address + 1)) << 8;
@@ -490,7 +494,6 @@ pub const Cpu = struct {
         }
     }
 
-
     fn tick_timer(self: *Cpu, cycles_elapsed: mcycles) void {
         //main clock = 4194304 hz in t-cycles
 
@@ -506,19 +509,19 @@ pub const Cpu = struct {
             var counter_increase: u8 = 0;
             switch (self.timer.control.clock_select) {
                 0 => {
-                    const timer4bit = (start_divider_val & 0b1111111111) + @as(u16, @intCast(cycles_elapsed));
+                    const timer4bit = (start_divider_val & 0b1111111111) + @as(u16, @intCast(cycles_elapsed * 4));
                     counter_increase = @intCast(timer4bit % 1024);
                 },
                 1 => {
-                    const timer16bit = (start_divider_val & 0b1111) + @as(u16, @intCast(cycles_elapsed));
+                    const timer16bit = (start_divider_val & 0b1111) + @as(u16, @intCast(cycles_elapsed * 4));
                     counter_increase = @intCast(timer16bit % 16);
                 },
                 2 => {
-                    const timer64bit = (start_divider_val & 0b111111) + @as(u16, @intCast(cycles_elapsed));
+                    const timer64bit = (start_divider_val & 0b111111) + @as(u16, @intCast(cycles_elapsed * 4));
                     counter_increase = @intCast(timer64bit % 64);
                 },
                 3 => {
-                    const timer256bit = (start_divider_val & 0xFF) + @as(u16, @intCast(cycles_elapsed));
+                    const timer256bit = (start_divider_val & 0xFF) + @as(u16, @intCast(cycles_elapsed * 4));
                     counter_increase = @intCast(timer256bit % 256);
                 },
             }
@@ -561,34 +564,7 @@ pub const Cpu = struct {
     }
 
     fn decode_and_execute(self: *Cpu) mcycles {
-        {
-            const watched_pcs = [_]u16{
-                0x0000,
-                //0x0100,
-                //0x60a7,
-                //0x6155,
-                //0x0171,
-
-                //0x1dd1,
-                //0x4e4b,
-                //0x59d8,
-                //0x55d6,
-                //0x4086,
-                //0x5219,
-                //0x58de,
-                //0x565f,
-            };
-            //const watched_pcs = [_]u16{};
-            //const watched_pc = 0xFFFF;
-            if (contains(u16, &watched_pcs, self.pc) == true)
-                self.enable_trace = true;
-
-            if (self.enable_trace)
-                self.print_trace();
-        }
-        // if (self.pc == 0x53cd) {
-        //     @breakpoint();
-        // }
+        self.tracer.trace(self.*);
 
         const instruction = self.fetch();
         var cycles: mcycles = 0;
@@ -620,20 +596,16 @@ pub const Cpu = struct {
             return 1;
         }
 
-        var clocks = execute_interrupts_if_enabled(self);
-        clocks += self.decode_and_execute();
-        self.tick_timer(clocks);
-        self.cycles_counter += clocks;
-        return clocks;
-    }
+        const interrup_clocks = execute_interrupts_if_enabled(self);
+        self.tick_timer(interrup_clocks);
+        self.cycles_counter += interrup_clocks;
 
-    fn contains(comptime T: type, haystack: []const T, needle: T) bool {
-        for (haystack) |item| {
-            if (item == needle) {
-                return true;
-            }
-        }
-        return false;
+        const instruction_clock = self.decode_and_execute();
+        self.tick_timer(instruction_clock);
+        self.cycles_counter += instruction_clock;
+
+        //Logger.log("clocks: {d}\n", .{self.cycles_counter});
+        return interrup_clocks + instruction_clock;
     }
 
     fn execute_interrupt(self: *Cpu, interrupt_address: u16) mcycles {
@@ -691,39 +663,6 @@ pub const Cpu = struct {
         }
         return 0;
     }
-
-    pub fn print_trace(self: *Cpu) void {
-        const zone = tracy.beginZone(@src(), .{ .name = "cpu print_trace" });
-        defer zone.end();
-        var tmp_ip = self.pc;
-        var opcode = self.load(tmp_ip);
-        tmp_ip += 1;
-        const is_extopcode = opcode == 0xCB;
-        if (is_extopcode) {
-            opcode = self.load(tmp_ip);
-            tmp_ip += 1;
-        }
-        const opInfo = if (is_extopcode)
-            self.extended_opcodetable[opcode]
-        else
-            self.opcodetable[opcode];
-        const arg = opInfo.arg;
-        var args_str: [8:0]u8 = undefined;
-        @memset(args_str[0..], ' ');
-
-        switch (arg) {
-            .U8 => {
-                _ = std.fmt.bufPrint(&args_str, " 0x{x:02}", .{self.load(tmp_ip)}) catch unreachable;
-                tmp_ip += 1;
-            },
-            .U16 => {
-                _ = std.fmt.bufPrint(&args_str, " 0x{x:04}", .{self.load16(tmp_ip)}) catch unreachable;
-                tmp_ip += 2;
-            },
-            .None => {},
-        }
-        Logger.log("[CPU] 0x{x:04} 0x{x:02} {s: <12}{s} AF:0x{x:04} BC:0x{x:04} DE:0x{x:04} HL:0x{x:04} SP:0x{x:04} {s}\n", .{ self.pc, opInfo.code, opInfo.name, args_str, self.r.f.AF, self.r.f.BC, self.r.f.DE, self.r.f.HL, self.sp, self.r.debug_flag_str() });
-    }
 };
 
 const std = @import("std");
@@ -732,6 +671,7 @@ const bus_import = @import("bus.zig");
 const cpu_utils = @import("cpu_utils.zig");
 const cpu_opcode_matadata_gen = @import("cpu_opcode_matadata_gen");
 const Logger = @import("logger.zig");
+const Tracer = @import("tracer.zig").Tracer;
 
 const Bus = bus_import.Bus;
 const OpCodeInfo = cpu_utils.OpCodeInfo;

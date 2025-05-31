@@ -87,13 +87,6 @@ pub const Bus = struct {
             0xC000...0xCFFF => { //wram bank 0
                 //TODO: do we need to split ram from wram?
                 self.ram[address] = value;
-                const watched_mem = [_]u16{
-                    0xc006,
-                    0xc0ba,
-                };
-                if (contains(u16, &watched_mem, address) == true and self.cpu.disable_boot_rom == 1) {
-                    std.debug.print("0x{x} set to {x}\n", .{ address, value });
-                }
             },
             0xD000...0xDFFF => { //wram bank 1
                 //TODO: do we need to split ram from wram?

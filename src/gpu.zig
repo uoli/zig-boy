@@ -35,6 +35,7 @@ pub const Gpu = struct {
     //scanline: u8,
     ram: []u8,
     bus: *Bus,
+    tracer: *Tracer,
     dbg_frame_count: u32,
 
     ly: u8,
@@ -44,6 +45,7 @@ pub const Gpu = struct {
     window_x: u8,
     window_y: u8,
     initializing_extra_steps: u8,
+    lcd_display_initialization_pending: bool,
     lcd_status: packed struct {
         mode: u2,
         coincidence: bool,
@@ -87,10 +89,11 @@ pub const Gpu = struct {
     framebuffer: [RESOLUTION_WIDTH * RESOLUTION_HEIGHT]u8,
     dbgTileFramebuffer: [16 * 8 * 24 * 8]u8,
 
-    pub fn init(bus: *Bus, ram: []u8) Gpu {
+    pub fn init(bus: *Bus, ram: []u8, tracer: *Tracer) Gpu {
         return Gpu{
             .ram = ram,
             .bus = bus,
+            .tracer = tracer,
             .dbg_frame_count = 0,
             .mode_clocks = 0,
             .ly = 0,
@@ -105,6 +108,7 @@ pub const Gpu = struct {
             .window_y = 0,
             .lcd_status = .{ .mode = 2, .coincidence = false, .mode0_hblank_interrupt = false, .mode_1_vblank_interrupt = false, .mode2_oam_interrupt = false, .coincidence_interrupt = false, ._ = undefined },
             .initializing_extra_steps = 0,
+            .lcd_display_initialization_pending = true,
             //.lcd_control = @bitCast(@as(u8, 0x91)),
             .lcd_control = @bitCast(@as(u8, 0x0)),
             .background_palette = .{ .color0 = 0, .color1 = 0, .color2 = 0, .color3 = 0 },
@@ -121,15 +125,12 @@ pub const Gpu = struct {
         const intialStatus = self.lcd_control.lcd_display_enable;
         self.lcd_control = @bitCast(value);
         if (intialStatus != self.lcd_control.lcd_display_enable) {
-            self.ly = 0;
-            self.lcd_status.mode = 2;
-            self.mode_clocks = 1;
-            // if (self.lcd_control.lcd_display_enable) {
-            //     self.initializing_extra_steps = 1;
-            // }
+            self.lcd_display_initialization_pending = true;
+            self.initializing_extra_steps = 4;
+            self.mode_clocks = 0;
         }
     }
-    
+
     pub fn request_dma_transfer(self: *Gpu, addr_base_req: u8) void {
         self.dma.requested = true;
         var addr_base = addr_base_req;
@@ -172,28 +173,47 @@ pub const Gpu = struct {
         self.handle_dma(cpuClocks);
 
         if (!self.lcd_control.lcd_display_enable) return GpuStepResult.Disabled;
-        self.mode_clocks += cpuClocks;
 
-        // if(self.initializing_extra_steps > 0) {
-        //     if (self.mode_clocks >= self.initializing_extra_steps) {
-        //         self.mode_clocks %= self.initializing_extra_steps;
-        //         self.initializing_extra_steps = 0;
-        //         self.lcd_status.mode = 2;
-        //     } else {
-        //          return GpuStepResult.Disabled;
-        //     }
+        // if (self.lcd_display_initialization_pending) {
+        //     self.lcd_display_initialization_pending = false;
+        //     self.ly = 0;
+        //     self.lcd_status.mode = 2;
+        //     self.dbg_mode();
+        //     self.mode_clocks = 0;
+        //     // if (self.lcd_control.lcd_display_enable) {
+        //     //     self.initializing_extra_steps = 1;
+        //     // }
         // }
+
+        if (self.initializing_extra_steps > 0) {
+            //if (self.mode_clocks >= self.initializing_extra_steps) {
+            //    self.mode_clocks %= self.initializing_extra_steps;
+            self.initializing_extra_steps = 0;
+            self.mode_clocks = 0;
+            //self.lcd_display_initialization_pending = false;
+            self.ly = 0;
+            self.lcd_status.mode = 2;
+            self.tracer.gpu_mode_trace(self.*);
+            //return GpuStepResult.Disabled;
+            //} else {
+            //   return GpuStepResult.Disabled;
+            //}
+        }
+
+        self.mode_clocks += cpuClocks;
 
         switch (self.lcd_status.mode) {
             0 => { //H-Blank
                 if (self.mode_clocks >= HBLANK_CLOKS) {
                     self.mode_clocks %= HBLANK_CLOKS;
                     self.ly += 1;
+                    self.tracer.gpu_ly_trace(self.*);
 
                     self.lcd_status.mode = if (self.ly < 144) 2 else 1;
                     check_lyc(self);
+                    self.tracer.gpu_mode_trace(self.*);
                     if (self.lcd_status.mode == 1) { //Start V-Blank
-                        Logger.log("start vblank frame {d}\n", .{self.dbg_frame_count});
+                        Logger.log("start vblank frame {d}, cpu cycles {d}\n", .{ self.dbg_frame_count, self.bus.cpu.cycles_counter });
                         self.bus.raise_cpu_interrupt(Cpu.Interrup.VBlank);
                         self.dbg_frame_count += 1;
                         return GpuStepResult.FrameReady;
@@ -204,8 +224,12 @@ pub const Gpu = struct {
                 if (self.mode_clocks >= VBLANK_LINE_CLOCKS) {
                     self.mode_clocks %= VBLANK_LINE_CLOCKS;
                     self.ly += 1;
+                    self.tracer.gpu_ly_trace(self.*);
+
                     if (self.ly == 154) {
                         self.lcd_status.mode = 2;
+                        self.tracer.gpu_mode_trace(self.*);
+
                         self.ly = 0;
                     }
                     check_lyc(self);
@@ -215,6 +239,8 @@ pub const Gpu = struct {
                 if (self.mode_clocks >= OAM_CLOCKS) {
                     self.mode_clocks %= OAM_CLOCKS;
                     self.lcd_status.mode = 3;
+                    self.tracer.gpu_mode_trace(self.*);
+
                     self.findVisibleSprites();
                 }
             },
@@ -222,6 +248,8 @@ pub const Gpu = struct {
                 if (self.mode_clocks >= RASTER_CLOKS) {
                     self.mode_clocks %= RASTER_CLOKS;
                     self.lcd_status.mode = 0;
+                    self.tracer.gpu_mode_trace(self.*);
+
                     self.drawscanline();
                 }
             },
@@ -461,7 +489,7 @@ const tracy = @import("tracy");
 const cpu_import = @import("cpu.zig");
 const bus_import = @import("bus.zig");
 const Logger = @import("logger.zig");
-
+const Tracer = @import("tracer.zig").Tracer;
 
 const Cpu = cpu_import.Cpu;
 const Bus = bus_import.Bus;

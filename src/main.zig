@@ -155,6 +155,7 @@ fn copy_framebuffer_to_SDL_tex(fbi: FrameBufferInfo, texture: ?*c.SDL_Texture) v
 const Emulator = struct {
     //gpa: std.heap.DebugAllocator,
     allocator: *const std.mem.Allocator,
+    tracer: *Tracer,
     cpu: *Cpu,
     gpu: *Gpu,
     boot_rom: []u8,
@@ -176,14 +177,17 @@ const Emulator = struct {
         var ram = try allocator.alloc(u8, 8 << 10 << 10);
         @memset(ram, 0);
 
+        const tracer = try allocator.create(Tracer);
+        tracer.* = Tracer.init();
+
         var bus = try allocator.create(Bus);
         bus.* = Bus.init(ram[0..ram.len], cartridge);
 
         const gpu = try allocator.create(Gpu);
-        gpu.* = Gpu.init(bus, ram[0..ram.len]);
+        gpu.* = Gpu.init(bus, ram[0..ram.len], tracer);
 
         const cpu = try allocator.create(Cpu);
-        cpu.* = Cpu.init(boot_rom, bus);
+        cpu.* = Cpu.init(boot_rom, bus, tracer);
 
         bus.connectGpu(gpu);
         bus.connectCpu(cpu);
@@ -191,6 +195,7 @@ const Emulator = struct {
         return Emulator{
             //.gpa = gpa,
             .allocator = &allocator,
+            .tracer = tracer,
             .cpu = cpu,
             .gpu = gpu,
             .boot_rom = boot_rom,
@@ -205,6 +210,7 @@ const Emulator = struct {
         self.allocator.destroy(self.cpu.bus);
         self.allocator.destroy(self.cpu);
         self.allocator.destroy(self.gpu);
+        self.allocator.destroy(self.tracer);
 
         self.allocator.free(self.cartridge_rom);
         self.allocator.free(self.boot_rom);
@@ -271,6 +277,7 @@ const bus_import = @import("bus.zig");
 const gpu_import = @import("gpu.zig");
 const cartridge_import = @import("cartridge.zig");
 const Logger = @import("logger.zig");
+const Tracer = @import("tracer.zig").Tracer;
 const Bus = bus_import.Bus;
 const Cpu = cpu_import.Cpu;
 const Gpu = gpu_import.Gpu;
