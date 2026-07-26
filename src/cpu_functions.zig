@@ -80,10 +80,9 @@ fn rotate_right_carry(cpu: *Cpu, data: *u8) mcycles {
     return 1;
 }
 
-fn add16(cpu: *Cpu, rega: *u16, regb: *u16) !mcycles {
-    rega.*, const overflow = @addWithOverflow(rega.*, regb.*);
+fn add16(cpu: *Cpu, rega: *u16, regb: *const u16) !mcycles {
     const calcH: u16 = (rega.* & 0b111111111111) + (regb.* & 0b111111111111);
-    cpu.r.s.f.z = if (rega.* == 0) 1 else 0;
+    rega.*, const overflow = @addWithOverflow(rega.*, regb.*);
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = if (calcH > 0b111111111111) 1 else 0;
     cpu.r.s.f.c = overflow;
@@ -91,12 +90,7 @@ fn add16(cpu: *Cpu, rega: *u16, regb: *u16) !mcycles {
 }
 
 fn add16_rr_to_HL(cpu: *Cpu, regb: u16) !mcycles {
-    cpu.r.f.HL, const overflow = @addWithOverflow(cpu.r.f.HL, regb);
-    const calcH: u16 = (cpu.r.f.HL & 0b111111111111) + (regb & 0b111111111111);
-    cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = if (calcH > 0b111111111111) 1 else 0;
-    cpu.r.s.f.c = overflow;
-    return 2;
+    return add16(cpu, &cpu.r.f.HL, &regb);
 }
 
 pub fn add8(cpu: *Cpu, dest: *u8, src: u8) !mcycles {
