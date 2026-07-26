@@ -854,12 +854,16 @@ pub fn return_enable_interupt(cpu: *Cpu) !mcycles {
     return 4;
 }
 
-pub fn compare_immediate8_ra(cpu: *Cpu) !mcycles {
-    const immediate = Cpu.fetch(cpu);
-    cpu.r.s.f.z = if (cpu.r.s.a == immediate) 1 else 0;
+//CP value: computes A - value for flags only, result is discarded.
+fn compare_a_with(cpu: *Cpu, value: u8) void {
+    cpu.r.s.f.z = if (cpu.r.s.a == value) 1 else 0;
     cpu.r.s.f.n = 1;
-    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) < (immediate & 0x0F)) 1 else 0;
-    cpu.r.s.f.c = if (cpu.r.s.a < immediate) 1 else 0;
+    cpu.r.s.f.h = if ((cpu.r.s.a & 0x0F) < (value & 0x0F)) 1 else 0;
+    cpu.r.s.f.c = if (cpu.r.s.a < value) 1 else 0;
+}
+
+pub fn compare_immediate8_ra(cpu: *Cpu) !mcycles {
+    compare_a_with(cpu, Cpu.fetch(cpu));
     return 2;
 }
 
@@ -931,21 +935,17 @@ pub fn or_indirect_hl_with_a(cpu: *Cpu) !mcycles {
 }
 
 pub fn compare_b_to_a(cpu: *Cpu) !mcycles {
-    cpu.r.s.f.z = if (cpu.r.s.a == cpu.r.s.b) 1 else 0;
+    compare_a_with(cpu, cpu.r.s.b);
     return 1;
 }
 
 pub fn compare_c_to_a(cpu: *Cpu) !mcycles {
-    cpu.r.s.f.z = if (cpu.r.s.a == cpu.r.s.c) 1 else 0;
+    compare_a_with(cpu, cpu.r.s.c);
     return 1;
 }
 
 pub fn compare_indirectHL_to_a(cpu: *Cpu) !mcycles {
-    const hl_content = cpu.load(cpu.r.f.HL);
-    cpu.r.s.f.z = if (hl_content == cpu.r.s.a) 1 else 0;
-    cpu.r.s.f.n = 1;
-    cpu.r.s.f.h = if ((hl_content & 0x0F) < (cpu.r.s.a & 0x0F)) 1 else 0;
-    cpu.r.s.f.c = if (hl_content < cpu.r.s.a) 1 else 0;
+    compare_a_with(cpu, cpu.load(cpu.r.f.HL));
     return 2;
 }
 
