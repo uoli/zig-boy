@@ -111,6 +111,9 @@ pub const Cpu = struct {
         _: u3,
         enabled: u1,
     },
+    //Raw bytes written to the sound registers FF10-FF25. There is no APU yet, but
+    //reads must return the stored value with the write-only bits forced to 1.
+    sound_registers: [0x16]u8,
     serial_data_transfer: struct {
         data: u8,
         control: packed struct {
@@ -385,6 +388,7 @@ pub const Cpu = struct {
                 ._ = 0,
                 .enabled = 0,
             },
+            .sound_registers = [_]u8{0} ** 0x16,
             .serial_data_transfer = .{
                 .data = 0,
                 .control = .{
@@ -407,8 +411,18 @@ pub const Cpu = struct {
                 return @bitCast(self.joypad);
             },
             0xFF10...0xFF25 => {
-                //No-Impl Sound related I/O ops
-                return 0;
+                //Bits that are write-only (or unused) read back as 1 on hardware.
+                const read_masks = [0x16]u8{
+                    0x80, 0x3F, 0x00, 0xFF, 0xBF, //FF10-FF14 NR10-NR14
+                    0xFF, 0x3F, 0x00, 0xFF, 0xBF, //FF15-FF19 unused,NR21-NR24
+                    0x7F, 0xFF, 0x9F, 0xFF, 0xBF, //FF1A-FF1E NR30-NR34
+                    0xFF, 0xFF, 0x00, 0x00, 0xBF, //FF1F-FF23 unused,NR41-NR44
+                    0x00, 0x00, //FF24-FF25 NR50-NR51
+                };
+                return self.sound_registers[address - 0xFF10] | read_masks[address - 0xFF10];
+            },
+            0xFF26 => { //NR52: unused bits 6-4 read as 1
+                return @as(u8, @bitCast(self.sound_flags)) | 0x70;
             },
             0xFFFF => {
                 return @bitCast(self.interrupt.interrupt_enabled);
@@ -456,7 +470,7 @@ pub const Cpu = struct {
             },
 
             0xFF10...0xFF25 => {
-                //No-Impl Sound related I/O ops
+                self.sound_registers[address - 0xFF10] = value;
             },
             0xFF26 => {
                 self.sound_flags = @bitCast(value);
