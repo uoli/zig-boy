@@ -49,8 +49,8 @@ pub fn compare_traces(path_a: []const u8, path_b: []const u8) !bool {
     }
 
     while (true) {
-        const trace_data_a, const line_a = try read_line_until_parse_or_eof(reader_a, buf_a[0..], &extract_trace_mine, &current_line_number_a);
-        const trace_data_b, const line_b = try read_line_until_parse_or_eof(reader_b, buf_b[0..], &extract_trace_higan, &current_line_number_b);
+        const trace_data_a, const line_a = try read_line_until_parse_or_eof(reader_a, buf_a[0..], &extract_trace_mine, &current_line_number_a) orelse return true;
+        const trace_data_b, const line_b = try read_line_until_parse_or_eof(reader_b, buf_b[0..], &extract_trace_higan, &current_line_number_b) orelse return true;
         //var line_a = try reader_a.readUntilDelimiterAlloc(allocator, '\n', 1024);
         //var line_b = try reader_b.readUntilDelimiterAlloc(allocator, '\n', 1024);
 
@@ -80,16 +80,15 @@ fn contains(comptime T: type, haystack: []const T, needle: T) bool {
     return false;
 }
 
-fn read_line_until_parse_or_eof(reader: anytype, buf: []u8, fn_extract_trace: *const fn (line: []const u8) ParsedTraceData, current_line_number: *usize) !struct { TraceData, []u8 } {
+fn read_line_until_parse_or_eof(reader: anytype, buf: []u8, fn_extract_trace: *const fn (line: []const u8) ParsedTraceData, current_line_number: *usize) !?struct { TraceData, []u8 } {
     while (true) {
-        const line = try reader.readUntilDelimiterOrEof(buf, '\n');
+        const line = try reader.readUntilDelimiterOrEof(buf, '\n') orelse return null;
         current_line_number.* += 1;
 
-        const line_def: []u8 = line.?;
-        //std.debug.print("{*} , {d} {s}\n", .{ line_def.ptr, line_def.len, line_def });
-        const result = fn_extract_trace(line_def);
+        //std.debug.print("{*} , {d} {s}\n", .{ line.ptr, line.len, line });
+        const result = fn_extract_trace(line);
         switch (result) {
-            .Ok => return .{ result.Ok, line_def },
+            .Ok => return .{ result.Ok, line },
             .Error => continue,
         }
     }

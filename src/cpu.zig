@@ -564,7 +564,7 @@ pub const Cpu = struct {
     }
 
     fn decode_and_execute(self: *Cpu) mcycles {
-        self.tracer.trace(self.*);
+        self.tracer.trace(self);
 
         const instruction = self.fetch();
         var cycles: mcycles = 0;

@@ -128,6 +128,7 @@ pub const Gpu = struct {
             self.lcd_display_initialization_pending = true;
             self.initializing_extra_steps = 4;
             self.mode_clocks = 0;
+            Logger.log("lcdc enable={} cycles {d}\n", .{ self.lcd_control.lcd_display_enable, self.bus.cpu.cycles_counter });
         }
     }
 
@@ -193,7 +194,7 @@ pub const Gpu = struct {
             //self.lcd_display_initialization_pending = false;
             self.ly = 0;
             self.lcd_status.mode = 2;
-            self.tracer.gpu_mode_trace(self.*);
+            self.tracer.gpu_mode_trace(self);
             //return GpuStepResult.Disabled;
             //} else {
             //   return GpuStepResult.Disabled;
@@ -207,11 +208,11 @@ pub const Gpu = struct {
                 if (self.mode_clocks >= HBLANK_CLOKS) {
                     self.mode_clocks %= HBLANK_CLOKS;
                     self.ly += 1;
-                    self.tracer.gpu_ly_trace(self.*);
+                    self.tracer.gpu_ly_trace(self);
 
                     self.lcd_status.mode = if (self.ly < 144) 2 else 1;
                     check_lyc(self);
-                    self.tracer.gpu_mode_trace(self.*);
+                    self.tracer.gpu_mode_trace(self);
                     if (self.lcd_status.mode == 1) { //Start V-Blank
                         Logger.log("start vblank frame {d}, cpu cycles {d}\n", .{ self.dbg_frame_count, self.bus.cpu.cycles_counter });
                         self.bus.raise_cpu_interrupt(Cpu.Interrup.VBlank);
@@ -224,11 +225,11 @@ pub const Gpu = struct {
                 if (self.mode_clocks >= VBLANK_LINE_CLOCKS) {
                     self.mode_clocks %= VBLANK_LINE_CLOCKS;
                     self.ly += 1;
-                    self.tracer.gpu_ly_trace(self.*);
+                    self.tracer.gpu_ly_trace(self);
 
                     if (self.ly == 154) {
                         self.lcd_status.mode = 2;
-                        self.tracer.gpu_mode_trace(self.*);
+                        self.tracer.gpu_mode_trace(self);
 
                         self.ly = 0;
                     }
@@ -239,7 +240,7 @@ pub const Gpu = struct {
                 if (self.mode_clocks >= OAM_CLOCKS) {
                     self.mode_clocks %= OAM_CLOCKS;
                     self.lcd_status.mode = 3;
-                    self.tracer.gpu_mode_trace(self.*);
+                    self.tracer.gpu_mode_trace(self);
 
                     self.findVisibleSprites();
                 }
@@ -248,7 +249,7 @@ pub const Gpu = struct {
                 if (self.mode_clocks >= RASTER_CLOKS) {
                     self.mode_clocks %= RASTER_CLOKS;
                     self.lcd_status.mode = 0;
-                    self.tracer.gpu_mode_trace(self.*);
+                    self.tracer.gpu_mode_trace(self);
 
                     self.drawscanline();
                 }

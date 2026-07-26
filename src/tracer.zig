@@ -4,24 +4,24 @@ pub const Tracer = struct {
 
     pub fn init() Tracer {
         return Tracer{
-            .enabled = false,
+            .enabled = true,
             .enable_trace = false,
         };
     }
 
-    pub fn gpu_mode_trace(self: *Tracer, gpu: Gpu) void {
+    pub fn gpu_mode_trace(self: *Tracer, gpu: *const Gpu) void {
         if (!self.enabled) return;
 
-        Logger.log("mode {d}\n", .{gpu.lcd_status.mode});
+        Logger.log("mode {d} cycles {d}\n", .{ gpu.lcd_status.mode, gpu.bus.cpu.cycles_counter });
     }
 
-    pub fn gpu_ly_trace(self: *Tracer, gpu: Gpu) void {
+    pub fn gpu_ly_trace(self: *Tracer, gpu: *const Gpu) void {
         if (!self.enabled) return;
 
-        Logger.log("status.ly {d}\n", .{gpu.ly});
+        Logger.log("status.ly {d} cycles {d}\n", .{ gpu.ly, gpu.bus.cpu.cycles_counter });
     }
 
-    pub fn trace(self: *Tracer, cpu: Cpu) void {
+    pub fn trace(self: *Tracer, cpu: *const Cpu) void {
         if (!self.enabled) return;
 
         const watched_pcs = [_]u16{
@@ -49,7 +49,7 @@ pub const Tracer = struct {
             Tracer.print_trace(cpu);
     }
 
-    fn print_trace(cpu: Cpu) void {
+    fn print_trace(cpu: *const Cpu) void {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu print_trace" });
         defer zone.end();
         var tmp_ip = cpu.pc;
