@@ -130,7 +130,7 @@ pub const Gpu = struct {
             self.lcd_display_initialization_pending = true;
             self.initializing_extra_steps = 4;
             self.mode_clocks = 0;
-            Logger.log("lcdc enable={} cycles {d}\n", .{ self.lcd_control.lcd_display_enable, self.bus.cpu.cycles_counter });
+            Logger.log("lcdc enable={} ticks {d}\n", .{ self.lcd_control.lcd_display_enable, self.bus.ticks_emitted });
         }
     }
 
@@ -189,18 +189,15 @@ pub const Gpu = struct {
         // }
 
         if (self.initializing_extra_steps > 0) {
-            //if (self.mode_clocks >= self.initializing_extra_steps) {
-            //    self.mode_clocks %= self.initializing_extra_steps;
             self.initializing_extra_steps = 0;
-            self.mode_clocks = 0;
-            //self.lcd_display_initialization_pending = false;
             self.ly = 0;
             self.lcd_status.mode = 2;
+            //Start 1 cycle ahead: the first line after enabling the LCD is 4 dots
+            //short on hardware. (No extra credit for the LCDC write cycle itself:
+            //store ticks the bus before writing, so the PPU's first cycle already
+            //lines up with the tick that follows the write.)
+            self.mode_clocks = 1;
             self.tracer.gpu_mode_trace(self);
-            //return GpuStepResult.Disabled;
-            //} else {
-            //   return GpuStepResult.Disabled;
-            //}
         }
 
         self.mode_clocks += cpuClocks;

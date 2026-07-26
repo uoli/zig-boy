@@ -12,13 +12,13 @@ pub const Tracer = struct {
     pub fn gpu_mode_trace(self: *Tracer, gpu: *const Gpu) void {
         if (!self.enabled) return;
 
-        Logger.log("mode {d} cycles {d}\n", .{ gpu.lcd_status.mode, gpu.bus.cpu.cycles_counter });
+        Logger.log("mode {d} ticks {d}\n", .{ gpu.lcd_status.mode, gpu.bus.ticks_emitted });
     }
 
     pub fn gpu_ly_trace(self: *Tracer, gpu: *const Gpu) void {
         if (!self.enabled) return;
 
-        Logger.log("status.ly {d} cycles {d}\n", .{ gpu.ly, gpu.bus.cpu.cycles_counter });
+        Logger.log("status.ly {d} ticks {d}\n", .{ gpu.ly, gpu.bus.ticks_emitted });
     }
 
     pub fn trace(self: *Tracer, cpu: *const Cpu) void {

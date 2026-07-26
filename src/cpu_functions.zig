@@ -482,12 +482,15 @@ pub fn subtract_l_from_a(cpu: *Cpu) !mcycles {
 }
 
 pub fn subtract_a_b_cf(cpu: *Cpu) !mcycles {
-    var val, const overflow1 = @subWithOverflow(cpu.r.s.a, cpu.r.s.b);
-    val, const overflow2 = @subWithOverflow(val, cpu.r.s.f.c);
+    const a = cpu.r.s.a;
+    const b = cpu.r.s.b;
+    const carry = cpu.r.s.f.c;
+    var val, const overflow1 = @subWithOverflow(a, b);
+    val, const overflow2 = @subWithOverflow(val, carry);
     cpu.r.s.a = val;
-    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.z = if (val == 0) 1 else 0;
     cpu.r.s.f.n = 1;
-    cpu.r.s.f.h = if ((val & 0x0F) < (val)) 1 else 0;
+    cpu.r.s.f.h = if ((a & 0x0F) < (b & 0x0F) + carry) 1 else 0;
     cpu.r.s.f.c = overflow1 | overflow2;
     return 1;
 }
@@ -962,7 +965,7 @@ pub fn add_sp_s8_to_hl(cpu: *Cpu) !mcycles {
     cpu.r.s.f.h = if (hadd > 0xF) 1 else 0;
     cpu.r.s.f.n = 0;
     cpu.r.s.f.z = 0;
-    
+
     return 3;
 }
 
