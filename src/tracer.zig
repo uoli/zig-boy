@@ -53,11 +53,11 @@ pub const Tracer = struct {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu print_trace" });
         defer zone.end();
         var tmp_ip = cpu.pc;
-        var opcode = cpu.load(tmp_ip);
+        var opcode = cpu.peek(tmp_ip);
         tmp_ip += 1;
         const is_extopcode = opcode == 0xCB;
         if (is_extopcode) {
-            opcode = cpu.load(tmp_ip);
+            opcode = cpu.peek(tmp_ip);
             tmp_ip += 1;
         }
         const opInfo = if (is_extopcode)
@@ -70,11 +70,11 @@ pub const Tracer = struct {
 
         switch (arg) {
             .U8 => {
-                _ = std.fmt.bufPrint(&args_str, " 0x{x:02}", .{cpu.load(tmp_ip)}) catch unreachable;
+                _ = std.fmt.bufPrint(&args_str, " 0x{x:02}", .{cpu.peek(tmp_ip)}) catch unreachable;
                 tmp_ip += 1;
             },
             .U16 => {
-                _ = std.fmt.bufPrint(&args_str, " 0x{x:04}", .{cpu.load16(tmp_ip)}) catch unreachable;
+                _ = std.fmt.bufPrint(&args_str, " 0x{x:04}", .{cpu.peek16(tmp_ip)}) catch unreachable;
                 tmp_ip += 2;
             },
             .None => {},

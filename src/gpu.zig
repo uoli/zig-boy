@@ -85,6 +85,7 @@ pub const Gpu = struct {
 
     visibleSprites: [10]SpriteAttribute,
     visibleSpritesCount: usize,
+    frame_ready: bool,
 
     framebuffer: [RESOLUTION_WIDTH * RESOLUTION_HEIGHT]u8,
     dbgTileFramebuffer: [16 * 8 * 24 * 8]u8,
@@ -100,6 +101,7 @@ pub const Gpu = struct {
             .lyc = 0,
             .visibleSprites = [_]SpriteAttribute{undefined} ** 10,
             .visibleSpritesCount = 0,
+            .frame_ready = false,
             .framebuffer = [_]u8{0} ** (RESOLUTION_WIDTH * RESOLUTION_HEIGHT),
             .dbgTileFramebuffer = [_]u8{0} ** (TILEDEBUG_WIDTH * TILEDEBUG_HEIGHT),
             .scroll_x = 0,
@@ -217,6 +219,7 @@ pub const Gpu = struct {
                         Logger.log("start vblank frame {d}, cpu cycles {d}\n", .{ self.dbg_frame_count, self.bus.cpu.cycles_counter });
                         self.bus.raise_cpu_interrupt(Cpu.Interrup.VBlank);
                         self.dbg_frame_count += 1;
+                        self.frame_ready = true;
                         return GpuStepResult.FrameReady;
                     }
                 }
@@ -256,6 +259,14 @@ pub const Gpu = struct {
             },
         }
         return GpuStepResult.Normal;
+    }
+
+    //Latched at the 143->144 transition, cleared when consumed, so each frame is
+    //reported exactly once even though vblank lasts many cycles.
+    pub fn consume_frame_ready(self: *Gpu) bool {
+        const result = self.frame_ready;
+        self.frame_ready = false;
+        return result;
     }
 
     fn check_lyc(self: *Gpu) void {

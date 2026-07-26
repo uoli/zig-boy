@@ -189,8 +189,12 @@ const Emulator = struct {
         const cpu = try allocator.create(Cpu);
         cpu.* = Cpu.init(boot_rom, bus, tracer);
 
+        const timer = try allocator.create(Timer);
+        timer.* = Timer.init(bus);
+
         bus.connectGpu(gpu);
         bus.connectCpu(cpu);
+        bus.connectTimer(timer);
 
         return Emulator{
             //.gpa = gpa,
@@ -219,10 +223,8 @@ const Emulator = struct {
     pub fn run_until_frameready(self: Emulator) !void {
         const zone = tracy.beginZone(@src(), .{ .name = "run_until_frameready" });
         defer zone.end();
-        var gpuResult = GpuStepResult.Normal;
-        while (gpuResult != GpuStepResult.FrameReady) {
-            const clocks = self.cpu.step();
-            gpuResult = self.gpu.step(clocks);
+        while (!self.gpu.consume_frame_ready()) {
+            _ = self.cpu.step();
         }
     }
 
@@ -278,6 +280,7 @@ const gpu_import = @import("gpu.zig");
 const cartridge_import = @import("cartridge.zig");
 const Logger = @import("logger.zig");
 const Tracer = @import("tracer.zig").Tracer;
+const Timer = @import("timer.zig").Timer;
 const Bus = bus_import.Bus;
 const Cpu = cpu_import.Cpu;
 const Gpu = gpu_import.Gpu;

@@ -3,6 +3,8 @@ pub const Bus = struct {
     cartridge: *Cartridge,
     gpu: *Gpu = undefined,
     cpu: *Cpu = undefined,
+    timer: *Timer = undefined,
+    ticks_emitted: usize = 0,
 
     pub fn init(ram: []u8, cartridge: *Cartridge) Bus {
         return Bus{
@@ -17,6 +19,16 @@ pub const Bus = struct {
 
     pub fn connectCpu(self: *Bus, cpu: *Cpu) void {
         self.cpu = cpu;
+    }
+
+    pub fn connectTimer(self: *Bus, timer: *Timer) void {
+        self.timer = timer;
+    }
+
+    pub fn tick(self: *Bus, cycles: usize) void {
+        self.ticks_emitted += cycles;
+        _ = self.gpu.step(cycles);
+        self.timer.step(cycles);
     }
 
     pub fn raise_cpu_interrupt(self: *Bus, interrupt: Cpu.Interrup) void {
@@ -42,6 +54,9 @@ pub const Bus = struct {
             0xD000...0xDFFF => { //wram bank 1
                 //TODO: do we need to split ram from wram?
                 return self.ram[address];
+            },
+            0xFF04 => {
+                return @truncate(self.timer.divider_register >> 8);
             },
             0xFF40 => {
                 return @bitCast(self.gpu.lcd_control);
@@ -100,6 +115,15 @@ pub const Bus = struct {
             0xFF30...0xFF3F => { //Wave Pattern RAM
                 self.ram[address] = value;
             },
+            0xFF04 => {
+                self.timer.divider_register = 0;
+            },
+            0xFF06 => {
+                self.timer.modulo = value;
+            },
+            0xFF07 => {
+                self.timer.control = @bitCast(value);
+            },
             0xFF40 => {
                 self.gpu.set_lcdc(value);
             },
@@ -157,6 +181,7 @@ const tracy = @import("tracy");
 const cartridge_import = @import("cartridge.zig");
 const cpu_import = @import("cpu.zig");
 const gpu_import = @import("gpu.zig");
+const Timer = @import("timer.zig").Timer;
 
 const Cpu = cpu_import.Cpu;
 const Gpu = gpu_import.Gpu;

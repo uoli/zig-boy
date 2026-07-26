@@ -94,16 +94,6 @@ pub const Cpu = struct {
         interrupt_enabled: Interrupts,
     },
     disable_boot_rom: u8,
-    timer: struct {
-        modulo: u8,
-        divider_register: u16,
-        counter: u8,
-        control: packed struct {
-            clock_select: u2,
-            timer_running: bool,
-            _: u5,
-        },
-    },
     joypad: packed struct {
         P10_Right_or_A: JoypadButtonFlagState,
         P11_Left_or_B: JoypadButtonFlagState,
@@ -378,16 +368,6 @@ pub const Cpu = struct {
                     ._ = undefined,
                 },
             },
-            .timer = .{
-                .modulo = 0,
-                .control = .{
-                    .clock_select = 0,
-                    .timer_running = false,
-                    ._ = undefined,
-                },
-                .divider_register = 0xffe6,
-                .counter = 0,
-            },
             .joypad = .{
                 .P10_Right_or_A = JoypadButtonFlagState.NotPressed,
                 .P11_Left_or_B = JoypadButtonFlagState.NotPressed,
@@ -418,16 +398,13 @@ pub const Cpu = struct {
         };
     }
 
-    pub fn load(self: Cpu, address: u16) u8 {
+    pub fn peek(self: *const Cpu, address: u16) u8 {
         if (self.disable_boot_rom == 0 and address < 0x0100) {
             return self.boot_rom[address];
         }
         switch (address) {
             0xFF00 => {
                 return @bitCast(self.joypad);
-            },
-            0xFF04 => {
-                return @truncate(self.timer.divider_register >> 8);
             },
             0xFF10...0xFF25 => {
                 //No-Impl Sound related I/O ops
@@ -442,7 +419,19 @@ pub const Cpu = struct {
         }
     }
 
-    pub fn load16(self: Cpu, address: u16) u16 {
+    pub fn peek16(self: *const Cpu, address: u16) u16 {
+        var result: u16 = 0;
+        result += self.peek(address);
+        result += @as(u16, self.peek(address + 1)) << 8;
+        return result;
+    }
+
+    pub fn load(self: *const Cpu, address: u16) u8 {
+        self.bus.tick(1);
+        return self.peek(address);
+    }
+
+    pub fn load16(self: *const Cpu, address: u16) u16 {
         var result: u16 = 0;
         result += self.load(address);
         result += @as(u16, self.load(address + 1)) << 8;
@@ -450,6 +439,7 @@ pub const Cpu = struct {
     }
 
     pub fn store(self: *Cpu, address: u16, value: u8) void {
+        self.bus.tick(1);
         switch (address) {
             0xFF00 => {
                 //Only bit 5 and 4 are actually writable
@@ -464,15 +454,7 @@ pub const Cpu = struct {
                 //Serial Data Transfer? ignore for now
                 self.serial_data_transfer.control = @bitCast(value);
             },
-            0xFF04 => {
-                self.timer.divider_register = 0;
-            },
-            0xFF06 => {
-                self.timer.modulo = value;
-            },
-            0xFF07 => {
-                self.timer.control = @bitCast(value);
-            },
+
             0xFF10...0xFF25 => {
                 //No-Impl Sound related I/O ops
             },
@@ -491,45 +473,6 @@ pub const Cpu = struct {
             else => {
                 self.bus.write(address, value);
             },
-        }
-    }
-
-    fn tick_timer(self: *Cpu, cycles_elapsed: mcycles) void {
-        //main clock = 4194304 hz in t-cycles
-
-        //timer_clock_0 = 1 -> 4096hz   in t-cycles, 1024 times slower
-        //timer_clock_1 = 1 -> 262144hz in t-cycles, 16   times slower
-        //timer_clock_2 = 1 -> 65536hz  in t-cycles, 64   times slower
-        //timer_clock_3 = 1 -> 16384hz  in t-cycles, 256  times slower
-
-        const start_divider_val = self.timer.divider_register;
-        self.timer.divider_register +%= @intCast(cycles_elapsed * 4);
-
-        if (self.timer.control.timer_running) {
-            var counter_increase: u8 = 0;
-            switch (self.timer.control.clock_select) {
-                0 => {
-                    const timer4bit = (start_divider_val & 0b1111111111) + @as(u16, @intCast(cycles_elapsed * 4));
-                    counter_increase = @intCast(timer4bit % 1024);
-                },
-                1 => {
-                    const timer16bit = (start_divider_val & 0b1111) + @as(u16, @intCast(cycles_elapsed * 4));
-                    counter_increase = @intCast(timer16bit % 16);
-                },
-                2 => {
-                    const timer64bit = (start_divider_val & 0b111111) + @as(u16, @intCast(cycles_elapsed * 4));
-                    counter_increase = @intCast(timer64bit % 64);
-                },
-                3 => {
-                    const timer256bit = (start_divider_val & 0xFF) + @as(u16, @intCast(cycles_elapsed * 4));
-                    counter_increase = @intCast(timer256bit % 256);
-                },
-            }
-            self.timer.counter, const overflow = @addWithOverflow(self.timer.counter, counter_increase);
-            if (overflow == 1) {
-                self.timer.counter = self.timer.modulo;
-                self.raise_interrupt(Interrup.Timer);
-            }
         }
     }
 
@@ -592,16 +535,22 @@ pub const Cpu = struct {
         defer zone.end();
 
         if (self.halted) {
-            self.tick_timer(1);
+            self.bus.tick(1);
             return 1;
         }
 
+        //load/store emit ticks as they happen; afterwards tick the shortfall so the
+        //instruction's internal (non-memory) cycles are accounted for as well.
+        const interrupt_ticks_before = self.bus.ticks_emitted;
         const interrup_clocks = execute_interrupts_if_enabled(self);
-        self.tick_timer(interrup_clocks);
+        const interrupt_ticks_emitted = self.bus.ticks_emitted - interrupt_ticks_before;
+        if (interrup_clocks > interrupt_ticks_emitted) self.bus.tick(interrup_clocks - interrupt_ticks_emitted);
         self.cycles_counter += interrup_clocks;
 
+        const instruction_ticks_before = self.bus.ticks_emitted;
         const instruction_clock = self.decode_and_execute();
-        self.tick_timer(instruction_clock);
+        const instruction_ticks_emitted = self.bus.ticks_emitted - instruction_ticks_before;
+        if (instruction_clock > instruction_ticks_emitted) self.bus.tick(instruction_clock - instruction_ticks_emitted);
         self.cycles_counter += instruction_clock;
 
         //Logger.log("clocks: {d}\n", .{self.cycles_counter});
