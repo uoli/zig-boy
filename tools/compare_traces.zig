@@ -35,7 +35,15 @@ pub fn compare_traces(path_a: []const u8, path_b: []const u8) !bool {
     var buf_b: [1024]u8 = undefined;
     var current_line_number_a: usize = 0;
     var current_line_number_b: usize = 0;
-    const ignored_lines = [_]usize{ 35196, 35197, 35198 };
+    //The read buffers are reused for every line, so keep copies of the previously
+    //compared lines; the mismatching instruction is usually the one before.
+    var prev_buf_a: [1024]u8 = undefined;
+    var prev_buf_b: [1024]u8 = undefined;
+    var prev_len_a: usize = 0;
+    var prev_len_b: usize = 0;
+    var prev_line_number_a: usize = 0;
+    var prev_line_number_b: usize = 0;
+    const ignored_lines = [_]usize{}; //35196, 35197, 35198 };
     const start_line_a = 0; //41566; //2917640; //3169274; //2497355; //2485319; //2473283; //2461253; //2449218; //2437182; //2425148; //2413124; //2401089; //2389053; //2377019; //2376657; //2211599; //
     const start_line_b = 0; //41565; //2917640; //3169271; //2497355; //2485319; //2473283; //2461253; //2449218; //2437182; //2425148; //2413124; //2401089; //2389053; //2377019; //2376703; //2211598; //
 
@@ -56,17 +64,31 @@ pub fn compare_traces(path_a: []const u8, path_b: []const u8) !bool {
 
         if (!compare_lines(trace_data_a, trace_data_b)) {
             std.debug.print(
-                \\Lines do not matach:
+                \\Lines do not match:
+                \\[{d}] {s}
+                \\[{d}] {s}
+                \\
                 \\[{d}] {s}
                 \\[{d}] {s}
                 \\
                 \\
-            , .{ current_line_number_a, line_a, current_line_number_b, line_b });
-            if (contains(usize, &ignored_lines, current_line_number_a)) {
-                continue;
+            , .{
+                prev_line_number_a, prev_buf_a[0..prev_len_a],
+                current_line_number_a, line_a,
+                prev_line_number_b, prev_buf_b[0..prev_len_b],
+                current_line_number_b, line_b,
+            });
+            if (!contains(usize, &ignored_lines, current_line_number_a)) {
+                return false;
             }
-            return false;
         }
+
+        @memcpy(prev_buf_a[0..line_a.len], line_a);
+        prev_len_a = line_a.len;
+        prev_line_number_a = current_line_number_a;
+        @memcpy(prev_buf_b[0..line_b.len], line_b);
+        prev_len_b = line_b.len;
+        prev_line_number_b = current_line_number_b;
     }
     return true;
 }
