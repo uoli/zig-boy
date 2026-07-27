@@ -356,11 +356,14 @@ pub const Gpu = struct {
             const y: u8 = scrolled_y % tile_height;
             for (0..tile_width) |x| {
                 const bg_x = tile_x * 8 + x;
-                const screen_x: i16 = @as(i16, @intCast(bg_x)) - @as(i16, @intCast(self.scroll_x));
+                var screen_x: i16 = @as(i16, @intCast(bg_x)) - @as(i16, @intCast(self.scroll_x));
 
-                if (screen_x < 0 and self.scroll_x + RESOLUTION_WIDTH > 256) { //deal with wrapped camera
-                    const wrapped = self.scroll_x + RESOLUTION_WIDTH % 256;
-                    if (screen_x >= wrapped) continue;
+                const wrapped, const overflow = @addWithOverflow(self.scroll_x, RESOLUTION_WIDTH);
+
+                if (screen_x < 0 and overflow == 1) { //deal with wrapped camera
+                    //const wrapped = (self.scroll_x + RESOLUTION_WIDTH) % 256;
+                    if (bg_x >= wrapped) continue;
+                    screen_x += 256;
                 } else {
                     if (screen_x < 0 or screen_x >= RESOLUTION_WIDTH) continue;
                 }
