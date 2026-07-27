@@ -440,6 +440,11 @@ pub fn load_indirect_hl_to_e(cpu: *Cpu) !mcycles {
     return 2;
 }
 
+pub fn load_indirect_hl_to_h(cpu: *Cpu) !mcycles {
+    cpu.r.s.h = cpu.load(cpu.r.f.HL);
+    return 2;
+}
+
 pub fn add_a_to_b(cpu: *Cpu) !mcycles {
     return add8(cpu, &cpu.r.s.a, cpu.r.s.b);
 }
@@ -1313,6 +1318,12 @@ pub fn reset_indirecthl_bit4(cpu: *Cpu) !mcycles {
 
 pub fn reset_indirecthl_bit5(cpu: *Cpu) !mcycles {
     const new_val = cpu.load(cpu.r.f.HL) & inv_bitmasks[5];
+    cpu.store(cpu.r.f.HL, new_val);
+    return 4;
+}
+
+pub fn reset_indirect_hl_bit6(cpu: *Cpu) !mcycles {
+    const new_val = cpu.load(cpu.r.f.HL) & inv_bitmasks[6];
     cpu.store(cpu.r.f.HL, new_val);
     return 4;
 }
