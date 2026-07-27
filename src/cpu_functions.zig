@@ -1029,6 +1029,16 @@ pub fn shift_register_left(cpu: *Cpu, reg: *u8) mcycles {
     return 2;
 }
 
+pub fn shift_register_right_logical(cpu: *Cpu, reg: *u8) mcycles {
+    const bit0 = reg.* & 0b1;
+    reg.* = reg.* >> 1;
+    cpu.r.s.f.z = if (reg.* == 0) 1 else 0;
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 0;
+    cpu.r.s.f.c = if (bit0 == 1) 1 else 0;
+    return 2;
+}
+
 pub fn shift_register_right_keep_bit_7(cpu: *Cpu, reg: *u8) mcycles {
     const bit0 = reg.* & 0b1;
     const bit7 = (reg.* & 0b10000000);
@@ -1060,10 +1070,14 @@ pub fn shift_right_d(cpu: *Cpu) !mcycles {
     return shift_register_right_keep_bit_7(cpu, &cpu.r.s.d);
 }
 
+pub fn shift_right_logical_a(cpu: *Cpu) !mcycles {
+    return shift_register_right_logical(cpu, &cpu.r.s.a);
+}
+
 fn swap(cpu: *Cpu, reg: *u8) mcycles {
     const a = reg.*;
     reg.* = (a & 0xF0) >> 4 | (a & 0x0F) << 4;
-    cpu.r.s.f.z = if (cpu.r.s.a == 0) 1 else 0;
+    cpu.r.s.f.z = if (reg.* == 0) 1 else 0;
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 0;
     cpu.r.s.f.c = 0;
