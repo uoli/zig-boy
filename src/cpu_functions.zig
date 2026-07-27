@@ -315,6 +315,11 @@ pub fn load_b_to_e(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+pub fn load_c_to_e(cpu: *Cpu) !mcycles {
+    cpu.r.s.e = cpu.r.s.c;
+    return 1;
+}
+
 pub fn load_l_to_e(cpu: *Cpu) !mcycles {
     cpu.r.s.e = cpu.r.s.l;
     return 1;
@@ -498,18 +503,25 @@ pub fn subtract_indirect_hl_from_a(cpu: *Cpu) !mcycles {
     return 1 + sub8(cpu, &cpu.r.s.a, cpu.load(cpu.r.f.HL));
 }
 
-pub fn subtract_a_b_cf(cpu: *Cpu) !mcycles {
-    const a = cpu.r.s.a;
-    const b = cpu.r.s.b;
+fn subtract_8_cf(cpu: *Cpu, a: *u8, b: u8) !mcycles {
+    const original = a.*;
     const carry = cpu.r.s.f.c;
-    var val, const overflow1 = @subWithOverflow(a, b);
+    var val, const overflow1 = @subWithOverflow(a.*, b);
     val, const overflow2 = @subWithOverflow(val, carry);
-    cpu.r.s.a = val;
+    a.* = val;
     cpu.r.s.f.z = if (val == 0) 1 else 0;
     cpu.r.s.f.n = 1;
-    cpu.r.s.f.h = if ((a & 0x0F) < (b & 0x0F) + carry) 1 else 0;
+    cpu.r.s.f.h = if ((original & 0x0F) < (b & 0x0F) + carry) 1 else 0;
     cpu.r.s.f.c = overflow1 | overflow2;
-    return 1;
+    return 2;
+}
+
+pub fn subtract_a_b_cf(cpu: *Cpu) !mcycles {
+    return subtract_8_cf(cpu, &cpu.r.s.a, cpu.r.s.b);
+}
+
+pub fn sub_d8_from_a_with_carry(cpu: *Cpu) !mcycles {
+    return subtract_8_cf(cpu, &cpu.r.s.a, cpu.fetch());
 }
 
 pub fn subtract_b_from_a(cpu: *Cpu) !mcycles {
@@ -769,6 +781,10 @@ pub fn store_a_to_IndirectHL_inc(cpu: *Cpu) !mcycles {
 
 pub fn inc_HL(cpu: *Cpu) !mcycles {
     return inc_u16(cpu, &cpu.r.f.HL);
+}
+
+pub fn dec_HL(cpu: *Cpu) !mcycles {
+    return dec_16(cpu, &cpu.r.f.HL);
 }
 
 pub fn inc_H(cpu: *Cpu) !mcycles {

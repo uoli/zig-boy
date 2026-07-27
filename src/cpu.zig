@@ -75,9 +75,6 @@ fn init_tables(opcodetable: *[256]OpCodeInfo, jmptable: *[256]opFunc) void {
     }
 }
 
-const JoypadSelectState = enum(u1) { Selected = 0, NotSelected = 1 };
-const JoypadButtonFlagState = enum(u1) { Pressed = 0, NotPressed = 1 };
-
 pub const Cpu = struct {
     boot_rom: []const u8,
     cycles_counter: u64,
@@ -94,15 +91,7 @@ pub const Cpu = struct {
         interrupt_enabled: Interrupts,
     },
     disable_boot_rom: u8,
-    joypad: packed struct {
-        P10_Right_or_A: JoypadButtonFlagState,
-        P11_Left_or_B: JoypadButtonFlagState,
-        P12_Up_or_Select: JoypadButtonFlagState,
-        P13_Down_or_Start: JoypadButtonFlagState,
-        P14_Select_Direction: JoypadSelectState,
-        P15_Select_Button: JoypadSelectState,
-        _: u2,
-    },
+
     sound_flags: packed struct {
         sound_1_enabled: u1,
         sound_2_enabled: u1,
@@ -175,6 +164,7 @@ pub const Cpu = struct {
         jmptable[0x28] = &cf.jmp_if_zero;
         jmptable[0x29] = &cf.add_hl_hl;
         jmptable[0x2a] = &cf.load_HL_indirect_inc_to_a;
+        jmptable[0x2b] = &cf.dec_HL;
         jmptable[0x2c] = &cf.inc_l;
         jmptable[0x2e] = &cf.load_d8_to_l;
         jmptable[0x2f] = &cf.compl_a;
@@ -207,6 +197,7 @@ pub const Cpu = struct {
         jmptable[0x56] = &cf.load_indirect_hl_to_d;
         jmptable[0x57] = &cf.load_a_to_d;
         jmptable[0x58] = &cf.load_b_to_e;
+        jmptable[0x59] = &cf.load_c_to_e;
         jmptable[0x5D] = &cf.load_l_to_e;
         jmptable[0x5E] = &cf.load_indirect_hl_to_e;
         jmptable[0x5F] = &cf.load_a_to_e;
@@ -280,6 +271,7 @@ pub const Cpu = struct {
         jmptable[0xD8] = &cf.return_if_carry;
         jmptable[0xD9] = &cf.return_enable_interupt;
         jmptable[0xDA] = &cf.jmp_absolute_if_carry;
+        jmptable[0xDE] = &cf.sub_d8_from_a_with_carry;
         jmptable[0xE0] = &cf.load_a_to_indirect8;
         jmptable[0xE1] = &cf.pop_to_HL;
         jmptable[0xE2] = &cf.store_a_to_indirect_c;
@@ -391,15 +383,6 @@ pub const Cpu = struct {
                     .joypad = false,
                     ._ = undefined,
                 },
-            },
-            .joypad = .{
-                .P10_Right_or_A = JoypadButtonFlagState.NotPressed,
-                .P11_Left_or_B = JoypadButtonFlagState.NotPressed,
-                .P12_Up_or_Select = JoypadButtonFlagState.NotPressed,
-                .P13_Down_or_Start = JoypadButtonFlagState.NotPressed,
-                .P14_Select_Direction = JoypadSelectState.NotSelected,
-                .P15_Select_Button = JoypadSelectState.NotSelected,
-                ._ = 3,
             },
             .sound_flags = .{
                 .sound_1_enabled = 0,
