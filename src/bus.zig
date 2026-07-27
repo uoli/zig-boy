@@ -99,6 +99,9 @@ pub const Bus = struct {
 
                 self.ram[address] = value;
             },
+            0xA000...0xBFFF => {
+                self.cartridge.write(address, value);
+            },
             0xC000...0xCFFF => { //wram bank 0
                 //TODO: do we need to split ram from wram?
                 self.ram[address] = value;

@@ -171,8 +171,10 @@ const Emulator = struct {
         const boot_rom = try load_rom(boot_location, 256, allocator);
         const cartridge_rom = try load_rom(rom_location, buffer_size, allocator);
 
+        const external_ram = try allocator.alloc(u8, 8 << 10 << 10);
+
         const cartridge = try allocator.create(Cartridge);
-        cartridge.* = Cartridge.init(cartridge_rom[0..]);
+        cartridge.* = Cartridge.init(cartridge_rom[0..], external_ram[0..]);
 
         var ram = try allocator.alloc(u8, 8 << 10 << 10);
         @memset(ram, 0);
