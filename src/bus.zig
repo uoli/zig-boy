@@ -88,6 +88,9 @@ pub const Bus = struct {
             0xFF49 => {
                 return @bitCast(self.gpu.object_palette[1]);
             },
+            0xFF4D => {
+                return 0xFF; //CGB double-speed switch register
+            },
             0xFF80...0xFFFE => { // HRAM
                 return self.ram[address];
             },
@@ -134,6 +137,9 @@ pub const Bus = struct {
             },
             0xFF04 => {
                 self.timer.divider_register = 0;
+            },
+            0xFF05 => {
+                self.timer.counter = value;
             },
             0xFF06 => {
                 self.timer.modulo = value;

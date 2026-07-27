@@ -126,7 +126,9 @@ pub const Cartridge = struct {
 
     pub fn init(rom: []const u8, external_ram: []u8) Cartridge {
         const cartridge_type = CartridgeTypeMap[rom[0x147]];
-        std.debug.assert(cartridge_type.? == CartridgeType.MBC3_RAM_BATTERY or cartridge_type.? == CartridgeType.ROM_ONLY);
+        std.debug.assert(cartridge_type.? == CartridgeType.MBC3_RAM_BATTERY or
+            cartridge_type.? == CartridgeType.MBC1 or
+            cartridge_type.? == CartridgeType.ROM_ONLY);
         const rtc_start = std.time.Instant.now() catch unreachable;
         return Cartridge{
             .rom = rom,
