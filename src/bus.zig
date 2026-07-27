@@ -47,6 +47,9 @@ pub const Bus = struct {
                 //}
                 return self.ram[address];
             },
+            0xA000...0xBFFF => {
+                return self.cartridge.read(address);
+            },
             0xC000...0xCFFF => { //wram bank 0
                 //TODO: do we need to split ram from wram?
                 return self.ram[address];

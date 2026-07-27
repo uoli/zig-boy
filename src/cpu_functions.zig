@@ -246,6 +246,11 @@ pub fn load_d_to_b(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+pub fn load_e_to_b(cpu: *Cpu) !mcycles {
+    cpu.r.s.b = cpu.r.s.e;
+    return 1;
+}
+
 pub fn load_c_to_b(cpu: *Cpu) !mcycles {
     cpu.r.s.b = cpu.r.s.c;
     return 1;
@@ -286,6 +291,11 @@ pub fn load_c_to_d(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+pub fn load_e_to_d(cpu: *Cpu) !mcycles {
+    cpu.r.s.d = cpu.r.s.e;
+    return 1;
+}
+
 pub fn load_h_to_d(cpu: *Cpu) !mcycles {
     cpu.r.s.d = cpu.r.s.h;
     return 1;
@@ -293,6 +303,11 @@ pub fn load_h_to_d(cpu: *Cpu) !mcycles {
 
 pub fn load_a_to_d(cpu: *Cpu) !mcycles {
     cpu.r.s.d = cpu.r.s.a;
+    return 1;
+}
+
+pub fn load_b_to_e(cpu: *Cpu) !mcycles {
+    cpu.r.s.e = cpu.r.s.b;
     return 1;
 }
 
@@ -769,8 +784,14 @@ pub fn load_HL_indirect_inc_to_a(cpu: *Cpu) !mcycles {
     return 2;
 }
 
-pub fn load_bc_indirect_to_a(cpu: *Cpu) !mcycles {
-    cpu.r.s.l = cpu.load(cpu.r.f.BC);
+pub fn load_a_to_bc_indirect(cpu: *Cpu) !mcycles {
+    //cpu.r.s.l = cpu.load(cpu.r.f.BC);
+    cpu.store(cpu.r.f.BC, cpu.r.s.a);
+    return 2;
+}
+
+pub fn load_indirect_bc_to_a(cpu: *Cpu) !mcycles {
+    cpu.r.s.a = cpu.load(cpu.r.f.BC);
     return 2;
 }
 
@@ -938,6 +959,16 @@ pub fn compare_c_to_a(cpu: *Cpu) !mcycles {
     return 1;
 }
 
+pub fn compare_h_to_a(cpu: *Cpu) !mcycles {
+    compare_a_with(cpu, cpu.r.s.h);
+    return 1;
+}
+
+pub fn compare_l_to_a(cpu: *Cpu) !mcycles {
+    compare_a_with(cpu, cpu.r.s.l);
+    return 1;
+}
+
 pub fn compare_indirectHL_to_a(cpu: *Cpu) !mcycles {
     compare_a_with(cpu, cpu.load(cpu.r.f.HL));
     return 2;
@@ -990,6 +1021,9 @@ fn copy_compl_rbitN_to_z(cpu: *Cpu, reg: u8, comptime N: u8) mcycles {
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 1;
     return 2;
+}
+pub fn rotate_right_carry_e(cpu: *Cpu) !mcycles {
+    return rotate_right_carry(cpu, &cpu.r.s.e) + 1;
 }
 
 pub fn rotate_right_indirect_HL(cpu: *Cpu) !mcycles {
@@ -1058,6 +1092,10 @@ pub fn shift_left_B(cpu: *Cpu) !mcycles {
     return shift_register_left(cpu, &cpu.r.s.b);
 }
 
+pub fn shift_left_c(cpu: *Cpu) !mcycles {
+    return shift_register_left(cpu, &cpu.r.s.c);
+}
+
 pub fn shift_left_e(cpu: *Cpu) !mcycles {
     return shift_register_left(cpu, &cpu.r.s.e);
 }
@@ -1084,6 +1122,10 @@ fn swap(cpu: *Cpu, reg: *u8) mcycles {
     return 2;
 }
 
+pub fn swap_e(cpu: *Cpu) !mcycles {
+    return swap(cpu, &cpu.r.s.e);
+}
+
 pub fn swap_indirect_hl(cpu: *Cpu) !mcycles {
     var hl_content = cpu.load(cpu.r.f.HL);
     const cycles = swap(cpu, &hl_content);
@@ -1095,8 +1137,16 @@ pub fn swap_a(cpu: *Cpu) !mcycles {
     return swap(cpu, &cpu.r.s.a);
 }
 
+pub fn copy_compl_dbit0_to_c(cpu: *Cpu) !mcycles {
+    return copy_compl_rbitN_to_z(cpu, cpu.r.s.c, 0);
+}
+
 pub fn copy_compl_dbit0_to_z(cpu: *Cpu) !mcycles {
     return copy_compl_rbitN_to_z(cpu, cpu.r.s.d, 0);
+}
+
+pub fn copy_compl_dbit0_to_e(cpu: *Cpu) !mcycles {
+    return copy_compl_rbitN_to_z(cpu, cpu.r.s.e, 0);
 }
 
 pub fn copy_compl_abit0_to_z(cpu: *Cpu) !mcycles {
@@ -1225,6 +1275,11 @@ pub fn reset_indirecthl_bit5(cpu: *Cpu) !mcycles {
 
 pub fn reset_a_bit5(cpu: *Cpu) !mcycles {
     cpu.r.s.a &= inv_bitmasks[5];
+    return 2;
+}
+
+pub fn set_a_bit1(cpu: *Cpu) !mcycles {
+    cpu.r.s.a |= bitmasks[1];
     return 2;
 }
 
