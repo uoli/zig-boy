@@ -4,6 +4,7 @@ pub const Bus = struct {
     gpu: *Gpu = undefined,
     cpu: *Cpu = undefined,
     timer: *Timer = undefined,
+    joypad: *Joypad = undefined,
     ticks_emitted: usize = 0,
 
     pub fn init(ram: []u8, cartridge: *Cartridge) Bus {
@@ -23,6 +24,10 @@ pub const Bus = struct {
 
     pub fn connectTimer(self: *Bus, timer: *Timer) void {
         self.timer = timer;
+    }
+
+    pub fn connectJoypad(self: *Bus, joypad: *Joypad) void {
+        self.joypad = joypad;
     }
 
     pub fn tick(self: *Bus, cycles: usize) void {
@@ -57,6 +62,9 @@ pub const Bus = struct {
             0xD000...0xDFFF => { //wram bank 1
                 //TODO: do we need to split ram from wram?
                 return self.ram[address];
+            },
+            0xFF00 => {
+                return self.joypad.read();
             },
             0xFF04 => {
                 return @truncate(self.timer.divider_register >> 8);
@@ -117,6 +125,9 @@ pub const Bus = struct {
                 //shouldn't be accessed during mode 2 or 3
                 //std.debug.assert(self.gpu.mode != 2 and self.gpu.mode != 3);
                 self.ram[address] = value;
+            },
+            0xFF00 => {
+                self.joypad.write(value);
             },
             0xFF30...0xFF3F => { //Wave Pattern RAM
                 self.ram[address] = value;
@@ -188,6 +199,7 @@ const cartridge_import = @import("cartridge.zig");
 const cpu_import = @import("cpu.zig");
 const gpu_import = @import("gpu.zig");
 const Timer = @import("timer.zig").Timer;
+const Joypad = @import("joypad.zig").Joypad;
 
 const Cpu = cpu_import.Cpu;
 const Gpu = gpu_import.Gpu;

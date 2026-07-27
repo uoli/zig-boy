@@ -239,6 +239,7 @@ pub const Cpu = struct {
         jmptable[0x88] = &cf.add_b_cy_a_to_a;
         jmptable[0x90] = &cf.subtract_b_from_a;
         jmptable[0x92] = &cf.subtract_d_from_a;
+        jmptable[0x93] = &cf.subtract_e_from_a;
         jmptable[0x95] = &cf.subtract_l_from_a;
         jmptable[0x96] = &cf.subtract_indirect_hl_from_a;
         jmptable[0x98] = &cf.subtract_a_b_cf;
@@ -427,9 +428,6 @@ pub const Cpu = struct {
             return self.boot_rom[address];
         }
         switch (address) {
-            0xFF00 => {
-                return @bitCast(self.joypad);
-            },
             0xFF10...0xFF25 => {
                 //Bits that are write-only (or unused) read back as 1 on hardware.
                 const read_masks = [0x16]u8{
@@ -475,12 +473,6 @@ pub const Cpu = struct {
     pub fn store(self: *Cpu, address: u16, value: u8) void {
         self.bus.tick(1);
         switch (address) {
-            0xFF00 => {
-                //Only bit 5 and 4 are actually writable
-                const currentVal: u8 = @bitCast(self.joypad);
-                const newVal: u8 = (currentVal & 0b11001111) | (value & 0b00110000);
-                self.joypad = @bitCast(newVal);
-            },
             0xFF01 => {
                 self.serial_data_transfer.data = value;
             },

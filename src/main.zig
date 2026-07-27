@@ -12,6 +12,20 @@ fn load_rom(abs_rom_location: []const u8, max_bytes: usize, allocator: Allocator
     return cartridge_rom;
 }
 
+fn key_to_button(sym: c.SDL_Keycode) ?Joypad.Button {
+    return switch (sym) {
+        c.SDLK_RIGHT => .Right,
+        c.SDLK_LEFT => .Left,
+        c.SDLK_UP => .Up,
+        c.SDLK_DOWN => .Down,
+        c.SDLK_x => .A,
+        c.SDLK_z => .B,
+        c.SDLK_BACKSPACE => .Select,
+        c.SDLK_RETURN => .Start,
+        else => null,
+    };
+}
+
 pub fn main() !void {
     tracy.setThreadName("Main");
     defer tracy.message("Graceful main thread exit");
@@ -27,6 +41,19 @@ pub fn main() !void {
         if (deinit_status == .leak) expect(false) catch @panic("leak?");
     }
     const allocator = gpa.allocator();
+
+    var enable_tracer = false;
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
+    _ = args.next(); //executable name
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--enable-tracer")) {
+            enable_tracer = true;
+        } else {
+            std.debug.print("unknown argument: {s}\n", .{arg});
+            return error.UnknownArgument;
+        }
+    }
     //var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     //defer arena.deinit();
     //const allocator = arena.allocator();
@@ -83,8 +110,10 @@ pub fn main() !void {
     );
     defer c.SDL_DestroyTexture(tilesTexture);
 
-    var emulator = try Emulator.Init(allocator);
+    var emulator = try Emulator.Init(allocator, enable_tracer);
     defer emulator.close();
+
+    const lock_framerate = false;
 
     var prev_time = try std.time.Instant.now();
 
@@ -92,6 +121,14 @@ pub fn main() !void {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event) != 0) {
             switch (event.type) {
+                c.SDL_KEYDOWN => {
+                    const button = key_to_button(event.key.keysym.sym) orelse continue;
+                    emulator.joypad.Press(button);
+                },
+                c.SDL_KEYUP => {
+                    const button = key_to_button(event.key.keysym.sym) orelse continue;
+                    emulator.joypad.Release(button);
+                },
                 c.SDL_QUIT => {
                     quit = true;
                 },
@@ -126,8 +163,8 @@ pub fn main() !void {
 
         const target_frame_time_ms = 16;
         const delta_time_ms = (try std.time.Instant.now()).since(prev_time) / std.time.ns_per_ms;
-        if (delta_time_ms < target_frame_time_ms) {
-            //c.SDL_Delay(target_frame_time_ms - @as(u32, @intCast(delta_time_ms)));
+        if (lock_framerate and delta_time_ms < target_frame_time_ms) {
+            c.SDL_Delay(target_frame_time_ms - @as(u32, @intCast(delta_time_ms)));
         }
     }
 }
@@ -158,10 +195,13 @@ const Emulator = struct {
     tracer: *Tracer,
     cpu: *Cpu,
     gpu: *Gpu,
+    joypad: *Joypad,
+    timer: *Timer,
     boot_rom: []u8,
     cartridge_rom: []u8,
+    external_ram: []u8,
 
-    pub fn Init(allocator: Allocator) !Emulator {
+    pub fn Init(allocator: Allocator, enable_tracer: bool) !Emulator {
         const boot_location = "F:\\Projects\\higan\\higan\\System\\Game Boy\\boot.dmg-1.rom";
         const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Pokemon Red (UE) [S][!].gb";
         //const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Tetris (World) (Rev 1).gb";
@@ -180,7 +220,7 @@ const Emulator = struct {
         @memset(ram, 0);
 
         const tracer = try allocator.create(Tracer);
-        tracer.* = Tracer.init();
+        tracer.* = Tracer.init(enable_tracer);
 
         var bus = try allocator.create(Bus);
         bus.* = Bus.init(ram[0..ram.len], cartridge);
@@ -191,12 +231,16 @@ const Emulator = struct {
         const cpu = try allocator.create(Cpu);
         cpu.* = Cpu.init(boot_rom, bus, tracer);
 
+        const joypad = try allocator.create(Joypad);
+        joypad.* = Joypad.init(bus);
+
         const timer = try allocator.create(Timer);
         timer.* = Timer.init(bus);
 
         bus.connectGpu(gpu);
         bus.connectCpu(cpu);
         bus.connectTimer(timer);
+        bus.connectJoypad(joypad);
 
         return Emulator{
             //.gpa = gpa,
@@ -206,6 +250,9 @@ const Emulator = struct {
             .gpu = gpu,
             .boot_rom = boot_rom,
             .cartridge_rom = cartridge_rom,
+            .joypad = joypad,
+            .timer = timer,
+            .external_ram = external_ram,
         };
     }
 
@@ -214,10 +261,13 @@ const Emulator = struct {
         self.allocator.free(self.cpu.bus.ram);
 
         self.allocator.destroy(self.cpu.bus);
+        self.allocator.destroy(self.joypad);
+        self.allocator.destroy(self.timer);
         self.allocator.destroy(self.cpu);
         self.allocator.destroy(self.gpu);
         self.allocator.destroy(self.tracer);
 
+        self.allocator.free(self.external_ram);
         self.allocator.free(self.cartridge_rom);
         self.allocator.free(self.boot_rom);
     }
@@ -283,6 +333,7 @@ const cartridge_import = @import("cartridge.zig");
 const Logger = @import("logger.zig");
 const Tracer = @import("tracer.zig").Tracer;
 const Timer = @import("timer.zig").Timer;
+const Joypad = @import("joypad.zig").Joypad;
 const Bus = bus_import.Bus;
 const Cpu = cpu_import.Cpu;
 const Gpu = gpu_import.Gpu;

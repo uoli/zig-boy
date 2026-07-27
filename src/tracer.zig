@@ -2,9 +2,9 @@ pub const Tracer = struct {
     enabled: bool,
     enable_trace: bool,
 
-    pub fn init() Tracer {
+    pub fn init(enabled: bool) Tracer {
         return Tracer{
-            .enabled = true,
+            .enabled = enabled,
             .enable_trace = false,
         };
     }

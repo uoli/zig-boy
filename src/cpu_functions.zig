@@ -520,6 +520,10 @@ pub fn subtract_d_from_a(cpu: *Cpu) !mcycles {
     return sub8(cpu, &cpu.r.s.a, cpu.r.s.d);
 }
 
+pub fn subtract_e_from_a(cpu: *Cpu) !mcycles {
+    return sub8(cpu, &cpu.r.s.a, cpu.r.s.e);
+}
+
 pub fn load_d16_to_sp(cpu: *Cpu) !mcycles {
     cpu.sp = cpu.fetch16();
     return 3;
