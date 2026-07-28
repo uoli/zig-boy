@@ -44,6 +44,7 @@ pub const Gpu = struct {
     scroll_y: u8,
     window_x: u8,
     window_y: u8,
+    wly: u8,
     initializing_extra_steps: u8,
     lcd_display_initialization_pending: bool,
     lcd_status: packed struct {
@@ -86,6 +87,7 @@ pub const Gpu = struct {
     visibleSprites: [10]SpriteAttribute,
     visibleSpritesCount: usize,
     frame_ready: bool,
+    stat_line: bool,
 
     framebuffer: [RESOLUTION_WIDTH * RESOLUTION_HEIGHT]u8,
     dbgTileFramebuffer: [16 * 8 * 24 * 8]u8,
@@ -108,6 +110,7 @@ pub const Gpu = struct {
             .scroll_y = 0,
             .window_x = 0,
             .window_y = 0,
+            .wly = 0,
             .lcd_status = .{ .mode = 2, .coincidence = false, .mode0_hblank_interrupt = false, .mode_1_vblank_interrupt = false, .mode2_oam_interrupt = false, .coincidence_interrupt = false, ._ = undefined },
             .initializing_extra_steps = 0,
             .lcd_display_initialization_pending = true,
@@ -120,7 +123,13 @@ pub const Gpu = struct {
                 .source = 0x00,
                 .cycles_remaining = 0,
             },
+            .stat_line = false,
         };
+    }
+
+    pub fn set_lyc(self: *Gpu, value: u8) void {
+        self.lyc = value;
+        self.check_lyc();
     }
 
     pub fn set_lcdc(self: *Gpu, value: u8) void {
@@ -130,8 +139,15 @@ pub const Gpu = struct {
             self.lcd_display_initialization_pending = true;
             self.initializing_extra_steps = 4;
             self.mode_clocks = 0;
+            self.wly = 0;
             Logger.log("lcdc enable={} ticks {d}\n", .{ self.lcd_control.lcd_display_enable, self.bus.ticks_emitted });
         }
+    }
+
+    pub fn set_lcdc_Status(self: *Gpu, value: u8) void {
+        const current: u8 = @bitCast(self.lcd_status);
+        self.lcd_status = @bitCast((current & 0b1000_0111) | (value & 0b0111_1000));
+        self.update_stat_line();
     }
 
     pub fn request_dma_transfer(self: *Gpu, addr_base_req: u8) void {
@@ -158,6 +174,16 @@ pub const Gpu = struct {
         } else {
             self.dma.cycles_remaining -= @intCast(cycles_elapsed);
         }
+    }
+
+    fn update_stat_line(self: *Gpu) void {
+        const line =
+            (self.lcd_status.mode0_hblank_interrupt and self.lcd_status.mode == 0) or
+            (self.lcd_status.mode_1_vblank_interrupt and self.lcd_status.mode == 1) or
+            (self.lcd_status.mode2_oam_interrupt and self.lcd_status.mode == 2) or
+            (self.lcd_status.coincidence_interrupt and self.lcd_status.coincidence);
+        if (line and !self.stat_line) self.bus.raise_cpu_interrupt(Cpu.Interrup.LCDStat);
+        self.stat_line = line;
     }
 
     const OAM_CLOCKS = 20;
@@ -191,6 +217,7 @@ pub const Gpu = struct {
         if (self.initializing_extra_steps > 0) {
             self.initializing_extra_steps = 0;
             self.ly = 0;
+            self.wly = 0;
             self.lcd_status.mode = 2;
             //Start 1 cycle ahead: the first line after enabling the LCD is 4 dots
             //short on hardware. (No extra credit for the LCDC write cycle itself:
@@ -210,12 +237,13 @@ pub const Gpu = struct {
                     self.tracer.gpu_ly_trace(self);
 
                     self.lcd_status.mode = if (self.ly < 144) 2 else 1;
-                    check_lyc(self);
+                    self.check_lyc();
                     self.tracer.gpu_mode_trace(self);
                     if (self.lcd_status.mode == 1) { //Start V-Blank
                         Logger.log("start vblank frame {d}, cpu cycles {d}\n", .{ self.dbg_frame_count, self.bus.cpu.cycles_counter });
                         self.bus.raise_cpu_interrupt(Cpu.Interrup.VBlank);
                         self.dbg_frame_count += 1;
+                        self.wly = 0;
                         self.frame_ready = true;
                         return GpuStepResult.FrameReady;
                     }
@@ -233,7 +261,7 @@ pub const Gpu = struct {
 
                         self.ly = 0;
                     }
-                    check_lyc(self);
+                    self.check_lyc();
                 }
             },
             2 => { //OAM
@@ -241,6 +269,7 @@ pub const Gpu = struct {
                     self.mode_clocks %= OAM_CLOCKS;
                     self.lcd_status.mode = 3;
                     self.tracer.gpu_mode_trace(self);
+                    self.update_stat_line();
 
                     self.findVisibleSprites();
                 }
@@ -250,6 +279,7 @@ pub const Gpu = struct {
                     self.mode_clocks %= RASTER_CLOKS;
                     self.lcd_status.mode = 0;
                     self.tracer.gpu_mode_trace(self);
+                    self.update_stat_line();
 
                     self.drawscanline();
                 }
@@ -268,10 +298,7 @@ pub const Gpu = struct {
 
     pub fn check_lyc(self: *Gpu) void {
         self.lcd_status.coincidence = self.ly == self.lyc;
-        if (self.lcd_status.coincidence) {
-            if (self.lcd_status.coincidence_interrupt)
-                self.bus.raise_cpu_interrupt(Cpu.Interrup.LCDStat);
-        }
+        self.update_stat_line();
     }
 
     fn findVisibleSprites(self: *Gpu) void {
@@ -393,11 +420,11 @@ pub const Gpu = struct {
                 const tile_y = i / 32;
                 const tile_index_mapped = if (self.lcd_control.bg_and_window_tile_select) tile_index else (tile_index +% 0x80);
                 const tile = bg_tile_data[tile_index_mapped];
-                const view_y = self.ly - self.window_y;
+                const view_y = self.wly;
 
                 if (tile_y * tile_height > view_y or tile_y * tile_height + tile_height <= view_y) continue; //TODO: optimize so we dont have to check and continue here
 
-                const tile_x_start_screen: i16 = @as(i16, @intCast(tile_x * tile_width)) - (@as(i16, @intCast(self.window_x)) - 7); //window x is offset by 7 pixels
+                const tile_x_start_screen: i16 = @as(i16, @intCast(tile_x * tile_width)) + (@as(i16, @intCast(self.window_x)) - 7); //window x is offset by 7 pixels
                 if (tile_x_start_screen >= RESOLUTION_WIDTH) continue;
                 if (tile_x_start_screen + tile_width <= 0) continue;
 
@@ -416,6 +443,7 @@ pub const Gpu = struct {
                     bg_color_index[@as(usize, @intCast(framebuffer_x))] = color_index;
                 }
             }
+            if (self.window_x <= 166) self.wly += 1;
         }
 
         //draw sprites

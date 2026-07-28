@@ -162,8 +162,7 @@ pub const Bus = struct {
                 self.gpu.set_lcdc(value);
             },
             0xFF41 => {
-                const current: u8 = @bitCast(self.gpu.lcd_status);
-                self.gpu.lcd_status = @bitCast((current & 0b1000_0111) | (value & 0b0111_1000));
+                self.gpu.set_lcdc_Status(value);
             },
             0xFF42 => {
                 self.gpu.scroll_y = value;
@@ -172,7 +171,7 @@ pub const Bus = struct {
                 self.gpu.scroll_x = value;
             },
             0xFF45 => {
-                self.gpu.lyc = value;
+                self.gpu.set_lyc(value);
             },
             0xFF46 => {
                 self.gpu.request_dma_transfer(value);
