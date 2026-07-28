@@ -206,6 +206,7 @@ const Emulator = struct {
         //const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Pokemon Red (UE) [S][!].gb";
         //const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Tetris (World) (Rev 1).gb";
         const rom_location = "F:\\Projects\\game-boy-emu-zig\\test-roms\\blargg\\cpu_instrs\\cpu_instrs.gb";
+        //const rom_location = "F:\\Projects\\game-boy-emu-zig\\test-roms\\blargg\\cpu_instrs\\individual\\01-special.gb";
 
         const buffer_size = 2 * 1024 * 1024;
 

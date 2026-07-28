@@ -141,14 +141,14 @@ pub const Cpu = struct {
         jmptable[0x0c] = &cf.inc_c;
         jmptable[0x0d] = &cf.dec_c;
         jmptable[0x0e] = &cf.load_d8_to_c;
-        jmptable[0x0f] = &cf.rotate_right_carry_a;
+        jmptable[0x0f] = &cf.rotate_right_carry_a1;
         jmptable[0x11] = &cf.load_d16_to_de;
         jmptable[0x12] = &cf.store_a_to_indirectDE;
         jmptable[0x13] = &cf.inc_de;
         jmptable[0x14] = &cf.inc_d;
         jmptable[0x15] = &cf.dec_d;
         jmptable[0x16] = &cf.load_d8_to_d;
-        jmptable[0x17] = &cf.rotate_left_a;
+        jmptable[0x17] = &cf.rotate_left_a1;
         jmptable[0x18] = &cf.jmp_s8;
         jmptable[0x19] = &cf.add_de_to_hl;
         jmptable[0x1A] = &cf.load_indirectDE_to_a;
@@ -156,7 +156,7 @@ pub const Cpu = struct {
         jmptable[0x1C] = &cf.inc_e;
         jmptable[0x1D] = &cf.dec_e;
         jmptable[0x1E] = &cf.load_d8_to_e;
-        jmptable[0x1F] = &cf.rotate_right_a;
+        jmptable[0x1F] = &cf.rotate_right_a1;
         jmptable[0x20] = &cf.jmp_nz_s8;
         jmptable[0x21] = &cf.load_d16_to_HL;
         jmptable[0x22] = &cf.store_a_to_IndirectHL_inc;
@@ -164,6 +164,7 @@ pub const Cpu = struct {
         jmptable[0x24] = &cf.inc_H;
         jmptable[0x25] = &cf.dec_H;
         jmptable[0x26] = &cf.load_d8_to_h;
+        jmptable[0x27] = &cf.decimal_adjust_a;
         jmptable[0x28] = &cf.jmp_if_zero;
         jmptable[0x29] = &cf.add_hl_hl;
         jmptable[0x2a] = &cf.load_HL_indirect_inc_to_a;
@@ -376,59 +377,112 @@ pub const Cpu = struct {
 
         cpu_opcode_matadata_gen.get_extopcodes_table(&extended_opcodetable);
 
-        extended_jmptable[0x0b] = &cf.rotate_right_carry_e;
-        extended_jmptable[0x0e] = &cf.rotate_right_indirect_HL;
-        extended_jmptable[0x11] = &cf.rotate_left_c;
-        extended_jmptable[0x12] = &cf.rotate_left_d;
-        extended_jmptable[0x19] = &cf.rotate_right_c;
-        extended_jmptable[0x1A] = &cf.rotate_right_d;
-        extended_jmptable[0x1B] = &cf.rotate_right_e;
-        extended_jmptable[0x20] = &cf.shift_left_B;
-        extended_jmptable[0x21] = &cf.shift_left_c;
-        extended_jmptable[0x23] = &cf.shift_left_e;
-        extended_jmptable[0x27] = &cf.shift_left_a;
-        extended_jmptable[0x2A] = &cf.shift_right_d;
-        extended_jmptable[0x33] = &cf.swap_e;
-        extended_jmptable[0x36] = &cf.swap_indirect_hl;
-        extended_jmptable[0x37] = &cf.swap_a;
-        extended_jmptable[0x38] = &cf.shift_right_logical_b;
-        extended_jmptable[0x3f] = &cf.shift_right_logical_a;
-        extended_jmptable[0x41] = &cf.copy_compl_dbit0_to_c;
-        extended_jmptable[0x42] = &cf.copy_compl_dbit0_to_z;
-        extended_jmptable[0x43] = &cf.copy_compl_dbit0_to_e;
-        extended_jmptable[0x46] = &cf.copy_compl_indirect_hl_bit0_to_z;
-        extended_jmptable[0x47] = &cf.copy_compl_abit0_to_z;
-        extended_jmptable[0x4e] = &cf.copy_compl_indirect_hl_bit1_to_z;
-        extended_jmptable[0x4f] = &cf.copy_compl_abit1_to_z;
-        extended_jmptable[0x56] = &cf.copy_compl_indirect_hl_bit2_to_z;
-        extended_jmptable[0x57] = &cf.copy_compl_abit2_to_z;
-        extended_jmptable[0x5E] = &cf.copy_compl_indirect_hl_bit3_to_z;
-        extended_jmptable[0x66] = &cf.copy_compl_indirect_hl_bit4_to_z;
-        extended_jmptable[0x6E] = &cf.copy_compl_indirect_hl_bit5_to_z;
-        extended_jmptable[0x6f] = &cf.copy_compl_abit5_to_z;
-        extended_jmptable[0x76] = &cf.copy_compl_indirect_hl_bit6_to_z;
-        extended_jmptable[0x77] = &cf.copy_compl_abit6_to_z;
-        extended_jmptable[0x7c] = &cf.copy_compl_hbit7_to_z;
-        extended_jmptable[0x7f] = &cf.copy_compl_abit7_to_z;
-        extended_jmptable[0x86] = &cf.reset_indirect_hl_bit0;
-        extended_jmptable[0x87] = &cf.reset_a_bit0;
-        extended_jmptable[0x8E] = &cf.reset_indirect_hl_bit1;
-        extended_jmptable[0x8F] = &cf.reset_a_bit1;
-        extended_jmptable[0x96] = &cf.reset_indirect_hl_bit2;
-        extended_jmptable[0x97] = &cf.reset_a_bit2;
-        extended_jmptable[0x9E] = &cf.reset_indirect_hl_bit3;
-        extended_jmptable[0xA6] = &cf.reset_indirecthl_bit4;
-        extended_jmptable[0xAE] = &cf.reset_indirecthl_bit5;
-        extended_jmptable[0xAF] = &cf.reset_a_bit5;
-        extended_jmptable[0xB6] = &cf.reset_indirect_hl_bit6;
-        extended_jmptable[0xCE] = &cf.set_indirecthl_bit1;
-        extended_jmptable[0xCF] = &cf.set_a_bit1;
-        extended_jmptable[0xD6] = &cf.set_indirect_hl_bit2;
-        extended_jmptable[0xDE] = &cf.set_indirect_hl_bit3;
-        extended_jmptable[0xE6] = &cf.set_indirect_hl_bit4;
-        extended_jmptable[0xEE] = &cf.set_indirect_hl_bit5;
-        extended_jmptable[0xF6] = &cf.set_indirect_hl_bit6;
-        extended_jmptable[0xFF] = &cf.set_a_bit7;
+        const reg_names = [_]?[]const u8{ "b", "c", "d", "e", "h", "l", null, "a" }; // null = (HL)
+
+        inline for (reg_names, 0..) |maybe_src, i| {
+            const opcode = 0x00 + i;
+            if (maybe_src) |src| {
+                extended_jmptable[opcode] = &cf.rotate_left_carry_r(src);
+            } else {
+                extended_jmptable[opcode] = &cf.rotate_left_carry_indirect_hl;
+            }
+        }
+
+        inline for (reg_names, 0..) |maybe_src, i| {
+            const opcode = 0x08 + i;
+            if (maybe_src) |src| {
+                extended_jmptable[opcode] = &cf.rotate_right_carry_r(src);
+            } else {
+                extended_jmptable[opcode] = &cf.rotate_right_carry_indirect_HL;
+            }
+        }
+
+        inline for (reg_names, 0..) |maybe_src, i| {
+            const opcode = 0x10 + i;
+            if (maybe_src) |src| {
+                extended_jmptable[opcode] = &cf.rotate_left_r(src);
+            } else {
+                extended_jmptable[opcode] = &cf.rotate_left_indirect_hl;
+            }
+        }
+
+        inline for (reg_names, 0..) |maybe_src, i| {
+            const opcode = 0x18 + i;
+            if (maybe_src) |src| {
+                extended_jmptable[opcode] = &cf.rotate_right_r(src);
+            } else {
+                extended_jmptable[opcode] = &cf.rotate_right_indirect_hl;
+            }
+        }
+
+        inline for (reg_names, 0..) |maybe_src, i| {
+            const opcode = 0x20 + i;
+            if (maybe_src) |src| {
+                extended_jmptable[opcode] = &cf.shift_left_r(src);
+            } else {
+                extended_jmptable[opcode] = &cf.shift_left_indirect_hl;
+            }
+        }
+
+        inline for (reg_names, 0..) |maybe_src, i| {
+            const opcode = 0x28 + i;
+            if (maybe_src) |src| {
+                extended_jmptable[opcode] = &cf.shift_right_r(src);
+            } else {
+                extended_jmptable[opcode] = &cf.shift_right_indirect_hl;
+            }
+        }
+
+        inline for (reg_names, 0..) |maybe_src, i| {
+            const opcode = 0x30 + i;
+            if (maybe_src) |src| {
+                extended_jmptable[opcode] = &cf.swap_r(src);
+            } else {
+                extended_jmptable[opcode] = &cf.swap_indirect_hl;
+            }
+        }
+
+        inline for (reg_names, 0..) |maybe_src, i| {
+            const opcode = 0x38 + i;
+            if (maybe_src) |src| {
+                extended_jmptable[opcode] = &cf.shift_right_logical_r(src);
+            } else {
+                extended_jmptable[opcode] = &cf.shift_right_logical_indirect_hl;
+            }
+        }
+
+        inline for (0..8) |bit| {
+            inline for (reg_names, 0..) |maybe_src, i| {
+                const opcode = 0x40 + i + bit * reg_names.len;
+                if (maybe_src) |src| {
+                    extended_jmptable[opcode] = &cf.copy_compl_r_bit_x_to_z(src, bit);
+                } else {
+                    extended_jmptable[opcode] = &cf.copy_compl_indirect_hl_bit_x_to_z(bit);
+                }
+            }
+        }
+
+        inline for (0..8) |bit| {
+            inline for (reg_names, 0..) |maybe_src, i| {
+                const opcode = 0x80 + i + bit * reg_names.len;
+                if (maybe_src) |src| {
+                    extended_jmptable[opcode] = &cf.reset_r_bit_x(src, bit);
+                } else {
+                    extended_jmptable[opcode] = &cf.reset_indirect_hl_bit_x(bit);
+                }
+            }
+        }
+
+        inline for (0..8) |bit| {
+            inline for (reg_names, 0..) |maybe_src, i| {
+                const opcode = 0xC0 + i + bit * reg_names.len;
+                if (maybe_src) |src| {
+                    extended_jmptable[opcode] = &cf.set_r_bit_x(src, bit);
+                } else {
+                    extended_jmptable[opcode] = &cf.set_indirect_hl_bit_x(bit);
+                }
+            }
+        }
 
         //const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
         //const extended_opcodetable, const extended_jmptable = process_opcodetable(&extended_opcodesInfo, &extended_opcodesFunc);
