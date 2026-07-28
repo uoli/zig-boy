@@ -15,8 +15,8 @@ const SpriteAttribute = packed struct {
 const SpriteData = struct {
     pattern: [16]u8,
     fn get_pixel_color_index(self: SpriteData, x: u8, y: u8) u2 {
-        const row_high = self.pattern[y * 2];
-        const row_low = self.pattern[y * 2 + 1];
+        const row_high = self.pattern[y * 2 + 1];
+        const row_low = self.pattern[y * 2];
 
         const pixel_low = std.math.shr(u8, row_low, (7 - x)) & 0b1;
         const pixel_high = std.math.shr(u8, row_high, (7 - x)) & 0b1;
@@ -415,6 +415,7 @@ pub const Gpu = struct {
         //     @breakpoint();
         // }
         const sprite_width = 8;
+        const sprite_height = 8;
         for (0..RESOLUTION_WIDTH) |index| {
             const i: u8 = @intCast(index);
             //const scrolled_x = self.scroll_x + i % 255;
@@ -424,15 +425,18 @@ pub const Gpu = struct {
 
             for (0..self.visibleSpritesCount) |si| {
                 const sprite = self.visibleSprites[si];
-                //TODO: handle flip, priority and x-ordering
+                //TODO: priority and x-ordering
                 const sprite_left_x: i16 = (@as(i16, @intCast(sprite.x)) - 8);
                 const sprite_right = (sprite_left_x + sprite_width);
                 if (sprite_left_x > screen_x or sprite_right <= screen_x) continue; //this is not fully correct
 
-                const sprite_y: i16 = screen_y - (@as(i16, @intCast(sprite.y)) - 16);
+                var sprite_y: i16 = screen_y - (@as(i16, @intCast(sprite.y)) - 16);
                 var sprite_x: u8 = @as(u8, @intCast(screen_x - sprite_left_x));
                 if (sprite.flags.xflip == 1) {
                     sprite_x = (sprite_width - 1) - sprite_x;
+                }
+                if (sprite.flags.yflip == 1) {
+                    sprite_y = (sprite_height - 1) - sprite_y;
                 }
 
                 const sprite_pattern = tile_data[sprite.tile_index];

@@ -83,7 +83,9 @@ pub const Bus = struct {
             },
             0xFF44 => {
                 return self.gpu.ly;
-                //return 0;
+            },
+            0xFF45 => {
+                return self.gpu.lyc;
             },
             0xFF48 => {
                 return @bitCast(self.gpu.object_palette[0]);
@@ -167,6 +169,9 @@ pub const Bus = struct {
             },
             0xFF43 => {
                 self.gpu.scroll_x = value;
+            },
+            0xFF45 => {
+                self.gpu.lyc = value;
             },
             0xFF46 => {
                 self.gpu.request_dma_transfer(value);
