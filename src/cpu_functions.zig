@@ -756,7 +756,7 @@ fn subtract_8_cf(cpu: *Cpu, a: *u8, b: u8) mcycles {
     cpu.r.s.f.n = 1;
     cpu.r.s.f.h = if ((original & 0x0F) < (b & 0x0F) + carry) 1 else 0;
     cpu.r.s.f.c = overflow1 | overflow2;
-    return 2;
+    return 1;
 }
 
 pub fn subtract_a_b_cf(cpu: *Cpu) !mcycles {

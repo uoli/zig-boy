@@ -69,6 +69,9 @@ pub const Bus = struct {
             0xFF04 => {
                 return @truncate(self.timer.divider_register >> 8);
             },
+            0xFF05 => {
+                return self.timer.counter;
+            },
             0xFF40 => {
                 return @bitCast(self.gpu.lcd_control);
             },
