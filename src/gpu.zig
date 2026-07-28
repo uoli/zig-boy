@@ -266,9 +266,9 @@ pub const Gpu = struct {
         return result;
     }
 
-    fn check_lyc(self: *Gpu) void {
-        if (self.ly == self.lyc) {
-            self.lcd_status.coincidence = true;
+    pub fn check_lyc(self: *Gpu) void {
+        self.lcd_status.coincidence = self.ly == self.lyc;
+        if (self.lcd_status.coincidence) {
             if (self.lcd_status.coincidence_interrupt)
                 self.bus.raise_cpu_interrupt(Cpu.Interrup.LCDStat);
         }
@@ -278,12 +278,12 @@ pub const Gpu = struct {
         const zone = tracy.beginZone(@src(), .{ .name = "gpu findVisibleSprites" });
         defer zone.end();
         const sprite_attrbiute_table_begin = 0xFE00;
-        const sprite_attrbiute_table_end = 0xFE9F;
+        const sprite_attrbiute_table_end = 0xFEA0;
         const sprite_attrbiute_table = self.ram[sprite_attrbiute_table_begin..sprite_attrbiute_table_end];
         const sprite_aatribute = sliceCast(SpriteAttribute, sprite_attrbiute_table, 0, 40);
 
         //TODO: support 16 height as well
-        const sprite_height = 8;
+        const sprite_height: u8 = if (self.lcd_control.obj_size) 16 else 8;
 
         self.visibleSpritesCount = 0;
         for (sprite_aatribute) |value| {
@@ -329,8 +329,10 @@ pub const Gpu = struct {
         const tile_height = 8;
         const shades = [_]u8{ 255, 128, 63, 0 };
 
-        const bg_tile_data_vram = if (self.lcd_control.bg_and_window_tile_select) self.ram[0x8000..0x8FFF] else self.ram[0x8800..0x97FF];
-        const bg_tile_data = sliceCast(SpriteData, bg_tile_data_vram, 0, 0xFFF);
+        const bg_tile_data_vram = if (self.lcd_control.bg_and_window_tile_select) self.ram[0x8000..0x9000] else self.ram[0x8800..0x9800];
+        const bg_tile_data = sliceCast(SpriteData, bg_tile_data_vram, 0, 0x100);
+
+        var bg_color_index = [_]u2{0} ** RESOLUTION_WIDTH;
 
         //std.debug.assert(self.lcd_control.bg_and_window_tile_select == true);
 
@@ -340,82 +342,90 @@ pub const Gpu = struct {
         // }
 
         //Draw BG
-        //This code is horrible, I need to re-write it!
-        const bg_map_1 = if (self.lcd_control.bg_tilemap_display_select == false) self.ram[0x9800..0x9BFF] else self.ram[0x9C00..0x9FFF];
-        for (bg_map_1, 0..) |tile_index, i| { //TODO: no need to iterate through all 256 tiles, just get the ones that are visible
-            const tile_x = i % 32;
-            const tile_y = i / 32;
-            const tile_index_mapped = if (self.lcd_control.bg_and_window_tile_select) tile_index else (tile_index +% 0x80);
-            const tile = bg_tile_data[tile_index_mapped];
+        if (self.lcd_control.bg_display == true) {
+            //This code is horrible, I need to re-write it!
+            const bg_map_1 = if (self.lcd_control.bg_tilemap_display_select == false) self.ram[0x9800..0x9C00] else self.ram[0x9C00..0xA000];
+            for (bg_map_1, 0..) |tile_index, i| { //TODO: no need to iterate through all 256 tiles, just get the ones that are visible
+                const tile_x = i % 32;
+                const tile_y = i / 32;
+                const tile_index_mapped = if (self.lcd_control.bg_and_window_tile_select) tile_index else (tile_index +% 0x80);
+                const tile = bg_tile_data[tile_index_mapped];
 
-            const scrolled_y = (self.ly +% self.scroll_y);
+                const scrolled_y = (self.ly +% self.scroll_y);
 
-            if (tile_y * tile_height > scrolled_y or tile_y * tile_height + tile_height <= scrolled_y) continue; //TODO: optimize so we dont have to check and continue here
-            //if (tile_x * tile_width > RESOLUTION_WIDTH) continue; //TODO: this should probably take scroll x into account
+                if (tile_y * tile_height > scrolled_y or tile_y * tile_height + tile_height <= scrolled_y) continue; //TODO: optimize so we dont have to check and continue here
+                //if (tile_x * tile_width > RESOLUTION_WIDTH) continue; //TODO: this should probably take scroll x into account
 
-            const y: u8 = scrolled_y % tile_height;
-            for (0..tile_width) |x| {
-                const bg_x = tile_x * 8 + x;
-                var screen_x: i16 = @as(i16, @intCast(bg_x)) - @as(i16, @intCast(self.scroll_x));
+                const y: u8 = scrolled_y % tile_height;
+                for (0..tile_width) |x| {
+                    const bg_x = tile_x * 8 + x;
+                    var screen_x: i16 = @as(i16, @intCast(bg_x)) - @as(i16, @intCast(self.scroll_x));
 
-                const wrapped, const overflow = @addWithOverflow(self.scroll_x, RESOLUTION_WIDTH);
+                    const wrapped, const overflow = @addWithOverflow(self.scroll_x, RESOLUTION_WIDTH);
 
-                if (screen_x < 0 and overflow == 1) { //deal with wrapped camera
-                    //const wrapped = (self.scroll_x + RESOLUTION_WIDTH) % 256;
-                    if (bg_x >= wrapped) continue;
-                    screen_x += 256;
-                } else {
-                    if (screen_x < 0 or screen_x >= RESOLUTION_WIDTH) continue;
+                    if (screen_x < 0 and overflow == 1) { //deal with wrapped camera
+                        //const wrapped = (self.scroll_x + RESOLUTION_WIDTH) % 256;
+                        if (bg_x >= wrapped) continue;
+                        screen_x += 256;
+                    } else {
+                        if (screen_x < 0 or screen_x >= RESOLUTION_WIDTH) continue;
+                    }
+
+                    const color_index = tile.get_pixel_color_index(@intCast(x), y);
+
+                    //const palette_table = if (sprite.flags.pallete == 0) self.ram[0xFF48] else self.ram[0xFF49];
+                    //const shade: u2 = @intCast((palette_table >> (color_index * 2)) & 0b11);
+                    //if (shade == 0) continue; //transparency
+                    const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + @as(usize, @intCast(screen_x));
+                    // if (framebuffer_index >= self.framebuffer.len)
+                    //     break;
+                    self.framebuffer[framebuffer_index] = shades[self.getBackgroundColor(color_index)];
+                    bg_color_index[@as(usize, @intCast(screen_x))] = color_index;
                 }
-
-                const color_index = tile.get_pixel_color_index(@intCast(x), y);
-
-                //const palette_table = if (sprite.flags.pallete == 0) self.ram[0xFF48] else self.ram[0xFF49];
-                //const shade: u2 = @intCast((palette_table >> (color_index * 2)) & 0b11);
-                //if (shade == 0) continue; //transparency
-                const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + @as(usize, @intCast(screen_x));
-                // if (framebuffer_index >= self.framebuffer.len)
-                //     break;
-                self.framebuffer[framebuffer_index] = shades[self.getBackgroundColor(color_index)];
             }
         }
 
         //Draw Window
         if (self.lcd_control.window_display_enable == true and self.window_y <= self.ly) {
-            const win_map = if (self.lcd_control.window_tilemap_display_select == false) self.ram[0x9800..0x9BFF] else self.ram[0x9C00..0x9FFF];
+            const win_map = if (self.lcd_control.window_tilemap_display_select == false) self.ram[0x9800..0x9C00] else self.ram[0x9C00..0xA000];
             for (win_map, 0..) |tile_index, i| {
                 const tile_x = i % 32;
                 const tile_y = i / 32;
                 const tile_index_mapped = if (self.lcd_control.bg_and_window_tile_select) tile_index else (tile_index +% 0x80);
                 const tile = bg_tile_data[tile_index_mapped];
-                const view_y = self.ly;
+                const view_y = self.ly - self.window_y;
 
                 if (tile_y * tile_height > view_y or tile_y * tile_height + tile_height <= view_y) continue; //TODO: optimize so we dont have to check and continue here
-                if (tile_x * tile_width > RESOLUTION_WIDTH) continue;
+
+                const tile_x_start_screen: i16 = @as(i16, @intCast(tile_x * tile_width)) - (@as(i16, @intCast(self.window_x)) - 7); //window x is offset by 7 pixels
+                if (tile_x_start_screen >= RESOLUTION_WIDTH) continue;
+                if (tile_x_start_screen + tile_width <= 0) continue;
 
                 const y: u8 = view_y % tile_height;
 
                 for (0..tile_width) |x| {
-                    const framebuffer_x = tile_x * 8 + x;
-                    if (framebuffer_x < 0 or framebuffer_x >= RESOLUTION_WIDTH) break;
+                    const framebuffer_x: i16 = tile_x_start_screen + @as(i16, @intCast(x));
+                    if (framebuffer_x < 0) continue;
+                    if (framebuffer_x >= RESOLUTION_WIDTH) break;
 
                     const color_index = tile.get_pixel_color_index(@intCast(x), y);
                     const framebuffer_index: usize = (@as(usize, self.ly) * RESOLUTION_WIDTH) + @as(usize, @intCast(framebuffer_x));
                     if (framebuffer_index >= self.framebuffer.len)
                         break;
                     self.framebuffer[framebuffer_index] = shades[self.getBackgroundColor(color_index)];
+                    bg_color_index[@as(usize, @intCast(framebuffer_x))] = color_index;
                 }
             }
         }
 
         //draw sprites
-        const tile_data_vram = self.ram[0x8000..0x8FFF];
-        const tile_data = sliceCast(SpriteData, tile_data_vram, 0, 0xFFF);
+        const tile_data_vram = self.ram[0x8000..0x9000];
+        const tile_data = sliceCast(SpriteData, tile_data_vram, 0, 0x100);
         // if (self.dbg_frame_count == 1253 and self.visibleSpritesCount > 0) {
         //     @breakpoint();
         // }
         const sprite_width = 8;
-        const sprite_height = 8;
+        const sprite_height: u8 = if (self.lcd_control.obj_size) 16 else 8;
         for (0..RESOLUTION_WIDTH) |index| {
             const i: u8 = @intCast(index);
             //const scrolled_x = self.scroll_x + i % 255;
@@ -425,7 +435,7 @@ pub const Gpu = struct {
 
             for (0..self.visibleSpritesCount) |si| {
                 const sprite = self.visibleSprites[si];
-                //TODO: priority and x-ordering
+                //TODO: x-ordering
                 const sprite_left_x: i16 = (@as(i16, @intCast(sprite.x)) - 8);
                 const sprite_right = (sprite_left_x + sprite_width);
                 if (sprite_left_x > screen_x or sprite_right <= screen_x) continue; //this is not fully correct
@@ -439,8 +449,13 @@ pub const Gpu = struct {
                     sprite_y = (sprite_height - 1) - sprite_y;
                 }
 
-                const sprite_pattern = tile_data[sprite.tile_index];
-                const color_index = sprite_pattern.get_pixel_color_index(sprite_x, @as(u8, @intCast(sprite_y)));
+                var tile_index = sprite.tile_index;
+                if (self.lcd_control.obj_size) {
+                    tile_index = if (sprite_y >= 8) sprite.tile_index | 0x01 else sprite.tile_index & 0xFE;
+                }
+
+                const sprite_pattern = tile_data[tile_index];
+                const color_index = sprite_pattern.get_pixel_color_index(sprite_x, @intCast(@mod(sprite_y, 8)));
                 if (color_index == 0) continue; //transparent
                 const palette_table = if (sprite.flags.pallete == 0) self.object_palette[0] else self.object_palette[1];
 
@@ -460,9 +475,10 @@ pub const Gpu = struct {
                     },
                 }
 
-                //if (shade == 0) continue; //transparency
                 const framebuffer_index: usize = (@as(usize, screen_y) * RESOLUTION_WIDTH) + index;
+                if (sprite.flags.priority == 1 and bg_color_index[index] > 0) break; //this pixel is behind the background, but is the chosen sprite for this pixel, move on to the next pixel
                 self.framebuffer[framebuffer_index] = shades[shade];
+                break; //this is the chosen sprite for this pixel, move on to the next pixel
             }
         }
     }
@@ -474,8 +490,8 @@ pub const Gpu = struct {
         const tiles_colum = 16;
         const fb_width = tiles_colum * 8;
 
-        const sprite_table = self.ram[0x8000..0x97FF];
-        const sprite_data = sliceCast(SpriteData, sprite_table, 0, 0x0180);
+        const sprite_table = self.ram[0x8000..0x9800];
+        const sprite_data = sliceCast(SpriteData, sprite_table, 0, 384);
         const shades = [_]u8{ 255, 128, 63, 0 };
         for (sprite_data, 0..) |sprite, si| {
             const fbGrid_x = si % tiles_colum;
@@ -495,7 +511,7 @@ pub const Gpu = struct {
 };
 
 fn sliceCast(comptime T: type, buffer: []const u8, offset: usize, count: usize) []T {
-    if (offset + count * @sizeOf(type) > buffer.len) unreachable;
+    if (offset + count * @sizeOf(T) > buffer.len) unreachable;
 
     const ptr = @intFromPtr(buffer.ptr) + offset;
     const arrPtr: [*]T = @ptrFromInt(ptr);
