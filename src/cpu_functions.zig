@@ -111,7 +111,7 @@ fn rotate_right_carry(cpu: *Cpu, data: *u8) mcycles {
     const shifted: u8 = (data.* >> 1);
     data.* = carry << 7 | shifted;
 
-    cpu.r.s.f.z = 0;
+    cpu.r.s.f.z = if (data.* == 0) 1 else 0;
     cpu.r.s.f.n = 0;
     cpu.r.s.f.h = 0;
     cpu.r.s.f.c = if (carry & 0b1 != 0) 1 else 0;
@@ -215,13 +215,13 @@ pub fn add_sp_to_hl(cpu: *Cpu) !mcycles {
 }
 
 pub fn add_s8_to_sp(cpu: *Cpu) !mcycles {
-    const s8: i8 = @intCast(cpu.fetch());
-    const s8u: u16 = @intCast(s8);
-    const halfadd: u16 = (cpu.sp & 0x0F) + (s8u & 0x0F);
-    cpu.sp, cpu.r.s.f.c = @addWithOverflow(cpu.sp, s8u);
+    const imm = cpu.fetch();
+    const offset: u16 = @bitCast(@as(i16, @as(i8, @bitCast(imm))));
+    cpu.r.s.f.h = if ((cpu.sp & 0x0F) + (imm & 0x0F) > 0x0F) 1 else 0;
+    cpu.r.s.f.c = if ((cpu.sp & 0xFF) + @as(u16, imm) > 0xFF) 1 else 0;
+    cpu.sp +%= offset;
     cpu.r.s.f.z = 0;
     cpu.r.s.f.n = 0;
-    cpu.r.s.f.h = if (halfadd > 0x0F) 1 else 0; //TODO: find simpler way?
     return 4;
 }
 
@@ -695,7 +695,7 @@ fn add8_with_carry(cpu: *Cpu, dest: *u8, src: u8) mcycles {
 }
 
 pub fn add_b_cy_a_to_a(cpu: *Cpu) !mcycles {
-    return add8_with_carry(cpu, &cpu.r.s.a, cpu.r.s.a);
+    return add8_with_carry(cpu, &cpu.r.s.a, cpu.r.s.b);
 }
 
 pub fn add_c_cy_a_to_a(cpu: *Cpu) !mcycles {
@@ -873,6 +873,8 @@ pub fn load_d8_to_a(cpu: *Cpu) !mcycles {
 }
 
 pub fn flip_carry_flag(cpu: *Cpu) !mcycles {
+    cpu.r.s.f.n = 0;
+    cpu.r.s.f.h = 0;
     cpu.r.s.f.c = ~cpu.r.s.f.c;
     return 1;
 }
@@ -936,12 +938,12 @@ pub fn jmp_hl(cpu: *Cpu) !mcycles {
     return 1;
 }
 
-pub fn add_u8_as_signed_to_u16(dest: u8, pc: u16) struct { u16, bool } {
+fn add_u8_as_signed_to_u16(dest: u8, pc: u16) struct { u16, bool } {
     const signed_dest: i16 = @intCast(@as(i8, @bitCast(dest)));
     const pc_signed: i32 = @intCast(pc);
     const new_pc_singed: i32 = pc_signed + signed_dest;
     const overflow = new_pc_singed > 0xFFFF or new_pc_singed < 0;
-    return .{ @intCast(new_pc_singed), overflow };
+    return .{ @intCast(new_pc_singed & 0xFFFF), overflow };
 }
 
 pub fn pop_bc(cpu: *Cpu) !mcycles {
@@ -1461,10 +1463,10 @@ pub fn push_af(cpu: *Cpu) !mcycles {
 
 pub fn add_sp_s8_to_hl(cpu: *Cpu) !mcycles {
     const s8 = cpu.fetch();
-    const hl = cpu.r.f.HL;
+    const sp = cpu.sp;
     const result, _ = add_u8_as_signed_to_u16(s8, cpu.sp);
-    const hadd: u8 = @intCast((hl & 0x0F) + (s8 & 0x0F));
-    const cadd: u16 = @intCast((hl & 0xFF) + (s8 & 0xFF));
+    const hadd: u8 = @intCast((sp & 0x0F) + (s8 & 0x0F));
+    const cadd: u16 = @intCast((sp & 0xFF) + (s8 & 0xFF));
     cpu.r.f.HL = result;
     cpu.r.s.f.c = if (cadd > 0xFF) 1 else 0;
     cpu.r.s.f.h = if (hadd > 0xF) 1 else 0;
@@ -1673,7 +1675,7 @@ const inv_bitmasks = [_]u8{
 pub fn reset_r_bit_x(comptime dst: []const u8, comptime x: u8) fn (*Cpu) anyerror!mcycles {
     return struct {
         fn f(cpu: *Cpu) !mcycles {
-            @field(cpu.r.s, dst) = inv_bitmasks[x];
+            @field(cpu.r.s, dst) &= inv_bitmasks[x];
             return 2;
         }
     }.f;
