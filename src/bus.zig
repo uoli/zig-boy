@@ -91,6 +91,12 @@ pub const Bus = struct {
             0xFF49 => {
                 return @bitCast(self.gpu.object_palette[1]);
             },
+            0xFF4A => {
+                return self.gpu.window_y;
+            },
+            0xFF4B => {
+                return self.gpu.window_x;
+            },
             0xFF4D => {
                 return 0xFF; //CGB double-speed switch register
             },

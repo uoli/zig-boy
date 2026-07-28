@@ -1,9 +1,9 @@
-const SpriteAttribute = struct {
+const SpriteAttribute = packed struct {
     y: u8,
     x: u8,
     tile_index: u8,
     flags: packed struct {
-        cpalette: u2, //(CGB only)
+        cpalette: u3, //(CGB only)
         tile_vram: u1, //VRAM Bank (CGB only)
         pallete: u1,
         xflip: u1,
@@ -422,7 +422,6 @@ pub const Gpu = struct {
             const screen_x = i;
             const screen_y = self.ly;
 
-            //for (0..self.visibleSpritesCount) |si| {
             for (0..self.visibleSpritesCount) |si| {
                 const sprite = self.visibleSprites[si];
                 //TODO: handle flip, priority and x-ordering
@@ -431,7 +430,10 @@ pub const Gpu = struct {
                 if (sprite_left_x > screen_x or sprite_right <= screen_x) continue; //this is not fully correct
 
                 const sprite_y: i16 = screen_y - (@as(i16, @intCast(sprite.y)) - 16);
-                const sprite_x: u8 = @as(u8, @intCast(screen_x - sprite_left_x));
+                var sprite_x: u8 = @as(u8, @intCast(screen_x - sprite_left_x));
+                if (sprite.flags.xflip == 1) {
+                    sprite_x = (sprite_width - 1) - sprite_x;
+                }
 
                 const sprite_pattern = tile_data[sprite.tile_index];
                 const color_index = sprite_pattern.get_pixel_color_index(sprite_x, @as(u8, @intCast(sprite_y)));
