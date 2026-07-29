@@ -115,14 +115,20 @@ fn realtimeElapsedSince(start: std.time.Instant) RealTimeElapsed {
 pub const Cartridge = struct {
     rom: []const u8,
     cartridge_type: CartridgeType,
-    rom_bank_number: u8,
-    ram_enabled: bool = false,
-    ram_bank_selected: u2 = 0,
-    banking_mode: BankingMode = BankingMode.ROM,
-    latch_clock_data: u2 = 0,
-    external_ram: []u8 = undefined,
-    rtc_start: std.time.Instant,
-    latched_rtc: RealTimeElapsed = undefined,
+    rom_title: []const u8,
+    manufacturer_code: []const u8,
+    rtc_start: std.time.Instant, //cant be serialized by bytes, need conversion
+    state: State,
+
+    pub const State = struct {
+        rom_bank_number: u8,
+        ram_enabled: bool = false,
+        ram_bank_selected: u2 = 0,
+        banking_mode: BankingMode = BankingMode.ROM,
+        latch_clock_data: u2 = 0,
+        external_ram: []u8 = undefined,
+        latched_rtc: RealTimeElapsed = undefined,
+    };
 
     pub fn init(rom: []const u8, external_ram: []u8) Cartridge {
         const cartridge_type = CartridgeTypeMap[rom[0x147]];
@@ -133,43 +139,47 @@ pub const Cartridge = struct {
         return Cartridge{
             .rom = rom,
             .cartridge_type = cartridge_type.?,
-            .rom_bank_number = 1,
-            .ram_enabled = false,
-            .ram_bank_selected = 0,
-            .external_ram = external_ram,
+            .rom_title = rom[0x134..0x144],
+            .manufacturer_code = rom[0x13F..0x143],
             .rtc_start = rtc_start,
+            .state = .{
+                .rom_bank_number = 1,
+                .ram_enabled = false,
+                .ram_bank_selected = 0,
+                .external_ram = external_ram,
+            },
         };
     }
 
     fn translate_address_to_external_ram(self: *const Cartridge, address: u16) usize {
         //TODO: can we use ram_bank_selected even if banking_mode is ROM? I think so, but need to check
-        return @as(usize, address - 0xA000) + (@as(usize, self.ram_bank_selected) * 0x2000);
+        return @as(usize, address - 0xA000) + (@as(usize, self.state.ram_bank_selected) * 0x2000);
     }
 
     pub fn read(self: Cartridge, address: u16) u8 {
         switch (address) {
             0x0000...0x3FFF => {
                 var bank_selected: u8 = 0;
-                if (self.cartridge_type == CartridgeType.MBC1 and self.banking_mode == BankingMode.RAM) {
-                    bank_selected += @as(u8, self.ram_bank_selected & 0b11) << 5;
+                if (self.cartridge_type == CartridgeType.MBC1 and self.state.banking_mode == BankingMode.RAM) {
+                    bank_selected += @as(u8, self.state.ram_bank_selected & 0b11) << 5;
                 }
                 const addr_delta = @as(usize, bank_selected) * 0x4000 + @as(usize, address);
                 return self.rom[addr_delta];
             },
             0x4000...0x7FFF => {
                 var addr_delta: usize = address - 0x4000;
-                var bank_selected = self.rom_bank_number;
+                var bank_selected = self.state.rom_bank_number;
                 if (self.cartridge_type == CartridgeType.MBC1) {
-                    bank_selected += @as(u8, self.ram_bank_selected & 0b11) << 5;
+                    bank_selected += @as(u8, self.state.ram_bank_selected & 0b11) << 5;
                 }
                 addr_delta += @as(usize, bank_selected) * 0x4000;
                 return self.rom[addr_delta];
             },
             0xA000...0xBFFF => {
-                if (self.ram_enabled) {
+                if (self.state.ram_enabled) {
                     // Write to external RAM if enabled
                     const ram_address = self.translate_address_to_external_ram(address);
-                    return self.external_ram[ram_address];
+                    return self.state.external_ram[ram_address];
                 }
             },
             else => std.debug.panic("unhandled cartridge read address 0x{x}", .{address}),
@@ -181,30 +191,30 @@ pub const Cartridge = struct {
         switch (address) {
             0x0000...0x1FFF => {
                 if (value & 0x0F == 0x0A) {
-                    self.ram_enabled = true;
+                    self.state.ram_enabled = true;
                 } else {
-                    self.ram_enabled = false;
+                    self.state.ram_enabled = false;
                 }
             },
             0x2000...0x3FFF => {
-                self.rom_bank_number = if (value == 0) 1 else value;
+                self.state.rom_bank_number = if (value == 0) 1 else value;
             },
             0x4000...0x5FFF => {
                 // handle bank switching for RAM or other purposes
                 if (value > 0x03) {
                     std.debug.panic("Invalid RAM bank selection value: 0x{x}", .{value});
                 }
-                self.ram_bank_selected = @intCast(value & 0x03); // Only the lower 2 bits are used for RAM bank selection
+                self.state.ram_bank_selected = @intCast(value & 0x03); // Only the lower 2 bits are used for RAM bank selection
             },
             0x6000...0x7FFF => {
                 if (self.cartridge_type == CartridgeType.MBC1) {
-                    self.banking_mode = if (value & 0x01 == 0) BankingMode.ROM else BankingMode.RAM;
+                    self.state.banking_mode = if (value & 0x01 == 0) BankingMode.ROM else BankingMode.RAM;
                 } else if (self.cartridge_type == CartridgeType.MBC3_TIMER_BATTERY or self.cartridge_type == CartridgeType.MBC3_TIMER_RAM_BATTERY) {
                     const newValue = value & 0x01;
-                    if (self.latch_clock_data == 0x00 and newValue == 0x01) {
+                    if (self.state.latch_clock_data == 0x00 and newValue == 0x01) {
                         self.latch_rtc();
                     }
-                    self.latch_clock_data = @intCast(newValue);
+                    self.state.latch_clock_data = @intCast(newValue);
                 } else if (self.cartridge_type == CartridgeType.MBC3_RAM_BATTERY) {
                     //NOOP
                 } else {
@@ -212,10 +222,10 @@ pub const Cartridge = struct {
                 }
             },
             0xA000...0xBFFF => {
-                if (self.ram_enabled) {
+                if (self.state.ram_enabled) {
                     // Write to external RAM if enabled
                     const ram_address = self.translate_address_to_external_ram(address);
-                    self.external_ram[ram_address] = value;
+                    self.state.external_ram[ram_address] = value;
                 }
             },
             else => std.debug.panic("unhandled cartridge write address 0x{x}", .{address}),
@@ -224,8 +234,196 @@ pub const Cartridge = struct {
 
     pub fn latch_rtc(self: *Cartridge) void {
         const elapsed = realtimeElapsedSince(self.rtc_start);
-        self.latched_rtc = elapsed;
+        self.state.latched_rtc = elapsed;
     }
 };
+
+// fn translate_address_to_external_ram(address: u16, ram_bank_selected: u2) usize {
+//     //TODO: can we use ram_bank_selected even if banking_mode is ROM? I think so, but need to check
+//     return @as(usize, address - 0xA000) + (@as(usize, ram_bank_selected) * 0x2000);
+// }
+
+// pub const RomOnly = struct {
+//     rom: []const u8,
+//     pub fn init(rom: []const u8) RomOnly {
+//         return RomOnly{
+//             .rom = rom,
+//         };
+//     }
+//     pub fn read(self: *const RomOnly, address: u16) u8 {
+//         return self.rom[address];
+//     }
+//     pub fn write(self: *RomOnly, address: u16, value: u8) void {
+//         self.rom[address] = value;
+//     }
+// };
+
+// pub const Mbc1 = struct {
+//     banking_mode: BankingMode = BankingMode.ROM,
+//     ram_bank_selected: u2 = 0,
+
+//     pub fn read(self: *const Mbc1, address: u16) u8 {
+//         switch (address) {
+//             0x0000...0x3FFF => {
+//                 var bank_selected: u8 = 0;
+//                 if (self.state.banking_mode == BankingMode.RAM) {
+//                     bank_selected += @as(u8, self.state.ram_bank_selected & 0b11) << 5;
+//                 }
+//                 const addr_delta = @as(usize, bank_selected) * 0x4000 + @as(usize, address);
+//                 return self.rom[addr_delta];
+//             },
+//             0x4000...0x7FFF => {
+//                 var addr_delta: usize = address - 0x4000;
+//                 var bank_selected = self.state.rom_bank_number;
+//                 bank_selected += @as(u8, self.state.ram_bank_selected & 0b11) << 5;
+//                 addr_delta += @as(usize, bank_selected) * 0x4000;
+//                 return self.rom[addr_delta];
+//             },
+//             0xA000...0xBFFF => {
+//                 if (self.state.ram_enabled) {
+//                     // Write to external RAM if enabled
+//                     const ram_address = translate_address_to_external_ram(address, self.state.ram_bank_selected);
+//                     return self.state.external_ram[ram_address];
+//                 }
+//             },
+//             else => std.debug.panic("unhandled cartridge read address 0x{x}", .{address}),
+//         }
+//         return self.rom[address];
+//     }
+//     pub fn write(self: *Mbc1, address: u16, value: u8) void {
+//         switch (address) {
+//             0x0000...0x1FFF => {
+//                 if (value & 0x0F == 0x0A) {
+//                     self.state.ram_enabled = true;
+//                 } else {
+//                     self.state.ram_enabled = false;
+//                 }
+//             },
+//             0x2000...0x3FFF => {
+//                 self.state.rom_bank_number = if (value == 0) 1 else value;
+//             },
+//             0x4000...0x5FFF => {
+//                 // handle bank switching for RAM or other purposes
+//                 if (value > 0x03) {
+//                     std.debug.panic("Invalid RAM bank selection value: 0x{x}", .{value});
+//                 }
+//                 self.state.ram_bank_selected = @intCast(value & 0x03); // Only the lower 2 bits are used for RAM bank selection
+//             },
+//             0x6000...0x7FFF => {
+//                 self.state.banking_mode = if (value & 0x01 == 0) BankingMode.ROM else BankingMode.RAM;
+//             },
+//             0xA000...0xBFFF => {
+//                 if (self.state.ram_enabled) {
+//                     // Write to external RAM if enabled
+//                     const ram_address = translate_address_to_external_ram(address, self.state.ram_bank_selected);
+//                     self.state.external_ram[ram_address] = value;
+//                 }
+//             },
+//             else => std.debug.panic("unhandled cartridge write address 0x{x}", .{address}),
+//         }
+//     }
+// };
+
+// pub const Mbc3 = struct {
+//     banking_mode: BankingMode = BankingMode.ROM,
+//     ram_bank_selected: u2 = 0,
+
+//     pub fn read(self: *const Mbc3, address: u16) u8 {
+//         switch (address) {
+//             0x0000...0x3FFF => {
+//                 var bank_selected: u8 = 0;
+//                 if (self.state.banking_mode == BankingMode.RAM) {
+//                     bank_selected += @as(u8, self.state.ram_bank_selected & 0b11) << 5;
+//                 }
+//                 const addr_delta = @as(usize, bank_selected) * 0x4000 + @as(usize, address);
+//                 return self.rom[addr_delta];
+//             },
+//             0x4000...0x7FFF => {
+//                 var addr_delta: usize = address - 0x4000;
+//                 const bank_selected = self.state.rom_bank_number;
+//                 addr_delta += @as(usize, bank_selected) * 0x4000;
+//                 return self.rom[addr_delta];
+//             },
+//             0xA000...0xBFFF => {
+//                 if (self.state.ram_enabled) {
+//                     // Write to external RAM if enabled
+//                     const ram_address = translate_address_to_external_ram(address, self.state.ram_bank_selected);
+//                     return self.state.external_ram[ram_address];
+//                 }
+//             },
+//             else => std.debug.panic("unhandled cartridge read address 0x{x}", .{address}),
+//         }
+//         //return self.rom[address];
+//     }
+
+//     pub fn write(self: *Mbc3, address: u16, value: u8) void {
+//         switch (address) {
+//             0x0000...0x1FFF => {
+//                 if (value & 0x0F == 0x0A) {
+//                     self.state.ram_enabled = true;
+//                 } else {
+//                     self.state.ram_enabled = false;
+//                 }
+//             },
+//             0x2000...0x3FFF => {
+//                 self.state.rom_bank_number = if (value == 0) 1 else value;
+//             },
+//             0x4000...0x5FFF => {
+//                 // handle bank switching for RAM or other purposes
+//                 if (value > 0x03) {
+//                     std.debug.panic("Invalid RAM bank selection value: 0x{x}", .{value});
+//                 }
+//                 self.state.ram_bank_selected = @intCast(value & 0x03); // Only the lower 2 bits are used for RAM bank selection
+//             },
+//             0x6000...0x7FFF => {
+//                 if (self.cartridge_type == CartridgeType.MBC3_TIMER_BATTERY or self.cartridge_type == CartridgeType.MBC3_TIMER_RAM_BATTERY) {
+//                     const newValue = value & 0x01;
+//                     if (self.state.latch_clock_data == 0x00 and newValue == 0x01) {
+//                         self.latch_rtc();
+//                     }
+//                     self.state.latch_clock_data = @intCast(newValue);
+//                 } else if (self.cartridge_type == CartridgeType.MBC3_RAM_BATTERY) {
+//                     //NOOP
+//                 }
+//             },
+//             0xA000...0xBFFF => {
+//                 if (self.state.ram_enabled) {
+//                     // Write to external RAM if enabled
+//                     const ram_address = translate_address_to_external_ram(address, self.state.ram_bank_selected);
+//                     self.state.external_ram[ram_address] = value;
+//                 }
+//             },
+//             else => std.debug.panic("unhandled cartridge write address 0x{x}", .{address}),
+//         }
+//     }
+// };
+
+// pub const CartridgeController = union(enum) {
+//     rom_only: RomOnly,
+//     mbc1: Mbc1,
+//     mbc3: Mbc3,
+
+//     pub fn init(rom: []const u8, external_ram: []u8) CartridgeController {
+//         const cartridge_type = CartridgeTypeMap[rom[0x147]];
+//         return switch (cartridge_type.?) {
+//             .ROM_ONLY => .{ .rom_only = RomOnly.init(rom) },
+//             .MBC1 => .{ .mbc1 = Mbc1.init(rom, external_ram) },
+//             .MBC3_RAM_BATTERY => .{ .mbc3 = Mbc3.init(rom, external_ram) },
+//             else => unreachable,
+//         };
+//     }
+
+//     pub fn read(self: *const CartridgeController, address: u16) u8 {
+//         return switch (self.*) {
+//             inline else => |*impl| impl.read(address),
+//         };
+//     }
+
+//     pub fn write(self: *CartridgeController, address: u16, value: u8) void {
+//         switch (self.*) {
+//             inline else => |*impl| impl.write(address, value),
+//         }
+//     }
+// };
 
 const std = @import("std");

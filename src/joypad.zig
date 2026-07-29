@@ -3,7 +3,11 @@ const JoypadButtonFlagState = enum(u1) { Pressed = 0, NotPressed = 1 };
 
 pub const Joypad = struct {
     bus: *Bus,
-    registers: packed struct {
+    state: State,
+
+    joypad_state: u8 = 0xFF,
+
+    pub const State = packed struct {
         P10_Right_or_A: JoypadButtonFlagState,
         P11_Left_or_B: JoypadButtonFlagState,
         P12_Up_or_Select: JoypadButtonFlagState,
@@ -11,13 +15,12 @@ pub const Joypad = struct {
         P14_Select_Direction: JoypadSelectState,
         P15_Select_Button: JoypadSelectState,
         _: u2,
-    },
-    joypad_state: u8 = 0xFF,
+    };
 
     pub fn init(bus: *Bus) Joypad {
         return Joypad{
             .bus = bus,
-            .registers = .{
+            .state = .{
                 .P10_Right_or_A = JoypadButtonFlagState.NotPressed,
                 .P11_Left_or_B = JoypadButtonFlagState.NotPressed,
                 .P12_Up_or_Select = JoypadButtonFlagState.NotPressed,
@@ -31,17 +34,17 @@ pub const Joypad = struct {
     }
 
     pub fn read(self: *Joypad) u8 {
-        const joy_reg: u8 = @bitCast(self.registers);
+        const joy_reg: u8 = @bitCast(self.state);
         var result: u8 = 0xFF;
 
-        if (self.registers.P14_Select_Direction == JoypadSelectState.Selected) {
+        if (self.state.P14_Select_Direction == JoypadSelectState.Selected) {
             //Direction buttons
 
             const direction_buttons: u8 = self.joypad_state & 0b00001111;
             result = direction_buttons;
         }
 
-        if (self.registers.P15_Select_Button == JoypadSelectState.Selected) {
+        if (self.state.P15_Select_Button == JoypadSelectState.Selected) {
             //Action buttons
             const action_buttons: u8 = (self.joypad_state >> 4) & 0b00001111;
             result &= action_buttons;
@@ -51,9 +54,9 @@ pub const Joypad = struct {
 
     pub fn write(self: *Joypad, value: u8) void {
         //Only bit 5 and 4 are actually writable
-        const currentVal: u8 = @bitCast(self.registers);
+        const currentVal: u8 = @bitCast(self.state);
         const newVal: u8 = (currentVal & 0b11001111) | (value & 0b00110000);
-        self.registers = @bitCast(newVal);
+        self.state = @bitCast(newVal);
     }
 
     pub fn Press(self: *Joypad, button: Button) void {
