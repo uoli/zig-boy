@@ -27,6 +27,14 @@ pub fn build(b: *std.Build) void {
     run_tool_step.addFileArg(b.path("tools\\instructions-data.json"));
     const gen_output = run_tool_step.addOutputFileArg("cpu_opcode_matadata_gen.zig");
 
+    const cpu_utils_mod = b.createModule(.{
+        .root_source_file = b.path("src/cpu_utils.zig"),
+    });
+    const gen_mod = b.createModule(.{
+        .root_source_file = gen_output,
+    });
+    gen_mod.addImport("cpu_utils", cpu_utils_mod);
+
     // This creates a "module", which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
     // Every executable or library we compile will be based on one or more modules.
@@ -50,11 +58,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-
-    exe_mod.addAnonymousImport("cpu_opcode_matadata_gen", .{
-        .root_source_file = gen_output,
-        .imports = &[_]std.Build.Module.Import{.{ .name = "main", .module = exe_mod }},
-    });
+    exe_mod.addImport("cpu_utils", cpu_utils_mod);
+    exe_mod.addImport("cpu_opcode_matadata_gen", gen_mod);
 
     const sdl_dep = b.dependency("SDL", .{
         .target = target,

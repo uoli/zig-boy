@@ -2,16 +2,6 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 
-fn load_rom(abs_rom_location: []const u8, max_bytes: usize, allocator: Allocator) ![]u8 {
-    var file = try std.fs.openFileAbsolute(abs_rom_location, .{});
-    defer file.close();
-
-    // Read the contents
-    const cartridge_rom = try file.readToEndAlloc(allocator, max_bytes);
-
-    return cartridge_rom;
-}
-
 fn key_to_button(sym: c.SDL_Keycode) ?Joypad.Button {
     return switch (sym) {
         c.SDLK_RIGHT => .Right,
@@ -123,11 +113,11 @@ pub fn main() !void {
             switch (event.type) {
                 c.SDL_KEYDOWN => {
                     const button = key_to_button(event.key.keysym.sym) orelse continue;
-                    emulator.joypad.Press(button);
+                    emulator.system.joypad.Press(button);
                 },
                 c.SDL_KEYUP => {
                     const button = key_to_button(event.key.keysym.sym) orelse continue;
-                    emulator.joypad.Release(button);
+                    emulator.system.joypad.Release(button);
                 },
                 c.SDL_QUIT => {
                     quit = true;
@@ -189,114 +179,6 @@ fn copy_framebuffer_to_SDL_tex(fbi: FrameBufferInfo, texture: ?*c.SDL_Texture) v
     c.SDL_UnlockTexture(texture);
 }
 
-const Emulator = struct {
-    //gpa: std.heap.DebugAllocator,
-    allocator: *const std.mem.Allocator,
-    tracer: *Tracer,
-    cpu: *Cpu,
-    gpu: *Gpu,
-    joypad: *Joypad,
-    timer: *Timer,
-    boot_rom: []u8,
-    cartridge_rom: []u8,
-    external_ram: []u8,
-
-    pub fn Init(allocator: Allocator, enable_tracer: bool) !Emulator {
-        const boot_location = "F:\\Projects\\higan\\higan\\System\\Game Boy\\boot.dmg-1.rom";
-        //const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Pokemon Red (UE) [S][!].gb";
-        //const rom_location = "C:\\Users\\Leo\\Emulation\\Gameboy\\Tetris (World) (Rev 1).gb";
-        const rom_location = "F:\\Projects\\game-boy-emu-zig\\test-roms\\blargg\\cpu_instrs\\cpu_instrs.gb";
-        //const rom_location = "F:\\Projects\\game-boy-emu-zig\\test-roms\\blargg\\cpu_instrs\\individual\\01-special.gb";
-
-        const buffer_size = 2 * 1024 * 1024;
-
-        const boot_rom = try load_rom(boot_location, 256, allocator);
-        const cartridge_rom = try load_rom(rom_location, buffer_size, allocator);
-
-        const external_ram = try allocator.alloc(u8, 8 << 10 << 10);
-
-        const cartridge = try allocator.create(Cartridge);
-        cartridge.* = Cartridge.init(cartridge_rom[0..], external_ram[0..]);
-
-        var ram = try allocator.alloc(u8, 8 << 10 << 10);
-        @memset(ram, 0);
-
-        const tracer = try allocator.create(Tracer);
-        tracer.* = Tracer.init(enable_tracer);
-
-        var bus = try allocator.create(Bus);
-        bus.* = Bus.init(ram[0..ram.len], cartridge);
-
-        const gpu = try allocator.create(Gpu);
-        gpu.* = Gpu.init(bus, ram[0..ram.len], tracer);
-
-        const cpu = try allocator.create(Cpu);
-        cpu.* = Cpu.init(boot_rom, bus, tracer);
-
-        const joypad = try allocator.create(Joypad);
-        joypad.* = Joypad.init(bus);
-
-        const timer = try allocator.create(Timer);
-        timer.* = Timer.init(bus);
-
-        bus.connectGpu(gpu);
-        bus.connectCpu(cpu);
-        bus.connectTimer(timer);
-        bus.connectJoypad(joypad);
-
-        return Emulator{
-            //.gpa = gpa,
-            .allocator = &allocator,
-            .tracer = tracer,
-            .cpu = cpu,
-            .gpu = gpu,
-            .boot_rom = boot_rom,
-            .cartridge_rom = cartridge_rom,
-            .joypad = joypad,
-            .timer = timer,
-            .external_ram = external_ram,
-        };
-    }
-
-    pub fn close(self: Emulator) void {
-        self.allocator.destroy(self.cpu.bus.cartridge);
-        self.allocator.free(self.cpu.bus.ram);
-
-        self.allocator.destroy(self.cpu.bus);
-        self.allocator.destroy(self.joypad);
-        self.allocator.destroy(self.timer);
-        self.allocator.destroy(self.cpu);
-        self.allocator.destroy(self.gpu);
-        self.allocator.destroy(self.tracer);
-
-        self.allocator.free(self.external_ram);
-        self.allocator.free(self.cartridge_rom);
-        self.allocator.free(self.boot_rom);
-    }
-
-    pub fn run_until_frameready(self: Emulator) !void {
-        const zone = tracy.beginZone(@src(), .{ .name = "run_until_frameready" });
-        defer zone.end();
-        while (!self.gpu.consume_frame_ready()) {
-            _ = self.cpu.step();
-        }
-    }
-
-    pub fn getFrameBuffer(self: Emulator) FrameBufferInfo {
-        return FrameBufferInfo{ .framebuffer = &self.gpu.framebuffer, .width = Gpu.RESOLUTION_WIDTH, .height = Gpu.RESOLUTION_HEIGHT };
-    }
-
-    pub fn snapshotTiles(self: Emulator) FrameBufferInfo {
-        return FrameBufferInfo{ .framebuffer = self.gpu.snapshotTiles(), .width = 16 * 8, .height = 24 * 8 };
-    }
-};
-
-const FrameBufferInfo = struct {
-    framebuffer: []u8,
-    width: u32,
-    height: u32,
-};
-
 test "simple test" {
     var list = std.ArrayList(i32).init(std.testing.allocator);
     defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
@@ -320,27 +202,18 @@ test "fuzz example" {
 }
 
 const std = @import("std");
-const math = std.math;
 const Allocator = std.mem.Allocator;
 const c = @cImport({
     @cInclude("SDL2/SDL.h");
 });
 const tracy = @import("tracy");
 //pub const cpu_functions = @import("cpu_functions.zig");
-pub const cpu_utils = @import("cpu_utils.zig");
-const cpu_import = @import("cpu.zig");
-const bus_import = @import("bus.zig");
-const gpu_import = @import("gpu.zig");
-const cartridge_import = @import("cartridge.zig");
 const Logger = @import("logger.zig");
-const Tracer = @import("tracer.zig").Tracer;
-const Timer = @import("timer.zig").Timer;
+const emulator_import = @import("emulator.zig");
+const Emulator = emulator_import.Emulator;
+const FrameBufferInfo = emulator_import.FrameBufferInfo;
 const Joypad = @import("joypad.zig").Joypad;
-const Bus = bus_import.Bus;
-const Cpu = cpu_import.Cpu;
-const Gpu = gpu_import.Gpu;
-const Cartridge = cartridge_import.Cartridge;
-const GpuStepResult = gpu_import.GpuStepResult;
+const Gpu = @import("gpu.zig").Gpu;
 
 // This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
 const lib = @import("zig_hello_world_lib");

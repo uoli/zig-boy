@@ -52,7 +52,7 @@ pub fn main() !void {
     const s =
         \\const std = @import("std");
         \\const main = @import("main");
-        \\const cpu_utils = main.cpu_utils;
+        \\const cpu_utils = @import("cpu_utils");
         \\const OpCodeInfo = cpu_utils.OpCodeInfo;
         \\const ArgInfo = cpu_utils.ArgInfo;
         \\
