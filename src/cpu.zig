@@ -88,6 +88,7 @@ pub const Cpu = struct {
 
     pub const State = struct {
         cycles_counter: u64,
+        ticks_emitted: usize,
         r: Registers,
         sp: u16,
         pc: u16,
@@ -498,6 +499,7 @@ pub const Cpu = struct {
             .extended_jmptable = extended_jmptable,
             .state = .{
                 .cycles_counter = 0,
+                .ticks_emitted = 0,
                 .disable_boot_rom = 0,
                 .r = Registers.init(),
                 .sp = 0x0,
@@ -681,26 +683,32 @@ pub const Cpu = struct {
         return cycles;
     }
 
+    fn tick(self: *Cpu, cycles: mcycles) void {
+        self.state.ticks_emitted += cycles;
+        self.bus.tick(cycles);
+    }
+
     pub fn step(self: *Cpu) mcycles {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
 
         if (self.state.halted) {
             self.bus.tick(1);
+            self.state.cycles_counter += 1;
             return 1;
         }
 
         //load/store emit ticks as they happen; afterwards tick the shortfall so the
         //instruction's internal (non-memory) cycles are accounted for as well.
-        const interrupt_ticks_before = self.bus.ticks_emitted;
+        const interrupt_ticks_before = self.state.ticks_emitted;
         const interrup_clocks = execute_interrupts_if_enabled(self);
-        const interrupt_ticks_emitted = self.bus.ticks_emitted - interrupt_ticks_before;
+        const interrupt_ticks_emitted = self.state.ticks_emitted - interrupt_ticks_before;
         if (interrup_clocks > interrupt_ticks_emitted) self.bus.tick(interrup_clocks - interrupt_ticks_emitted);
         self.state.cycles_counter += interrup_clocks;
 
-        const instruction_ticks_before = self.bus.ticks_emitted;
+        const instruction_ticks_before = self.state.ticks_emitted;
         const instruction_clock = self.decode_and_execute();
-        const instruction_ticks_emitted = self.bus.ticks_emitted - instruction_ticks_before;
+        const instruction_ticks_emitted = self.state.ticks_emitted - instruction_ticks_before;
         if (instruction_clock > instruction_ticks_emitted) self.bus.tick(instruction_clock - instruction_ticks_emitted);
         self.state.cycles_counter += instruction_clock;
 

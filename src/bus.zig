@@ -5,7 +5,6 @@ pub const Bus = struct {
     cpu: *Cpu = undefined,
     timer: *Timer = undefined,
     joypad: *Joypad = undefined,
-    ticks_emitted: usize = 0,
 
     pub fn init(ram: []u8, cartridge: *Cartridge) Bus {
         return Bus{
@@ -31,7 +30,6 @@ pub const Bus = struct {
     }
 
     pub fn tick(self: *Bus, cycles: usize) void {
-        self.ticks_emitted += cycles;
         _ = self.gpu.step(cycles);
         self.timer.step(cycles);
     }
@@ -67,37 +65,37 @@ pub const Bus = struct {
                 return self.joypad.read();
             },
             0xFF04 => {
-                return @truncate(self.timer.divider_register >> 8);
+                return @truncate(self.timer.state.divider_register >> 8);
             },
             0xFF05 => {
-                return self.timer.counter;
+                return self.timer.state.counter;
             },
             0xFF40 => {
-                return @bitCast(self.gpu.lcd_control);
+                return @bitCast(self.gpu.state.lcd_control);
             },
             0xFF42 => {
-                return self.gpu.scroll_y;
+                return self.gpu.state.scroll_y;
             },
             0xFF43 => {
-                return self.gpu.scroll_x;
+                return self.gpu.state.scroll_x;
             },
             0xFF44 => {
-                return self.gpu.ly;
+                return self.gpu.state.ly;
             },
             0xFF45 => {
-                return self.gpu.lyc;
+                return self.gpu.state.lyc;
             },
             0xFF48 => {
-                return @bitCast(self.gpu.object_palette[0]);
+                return @bitCast(self.gpu.state.object_palette[0]);
             },
             0xFF49 => {
-                return @bitCast(self.gpu.object_palette[1]);
+                return @bitCast(self.gpu.state.object_palette[1]);
             },
             0xFF4A => {
-                return self.gpu.window_y;
+                return self.gpu.state.window_y;
             },
             0xFF4B => {
-                return self.gpu.window_x;
+                return self.gpu.state.window_x;
             },
             0xFF4D => {
                 return 0xFF; //CGB double-speed switch register
@@ -147,16 +145,16 @@ pub const Bus = struct {
                 self.ram[address] = value;
             },
             0xFF04 => {
-                self.timer.divider_register = 0;
+                self.timer.state.divider_register = 0;
             },
             0xFF05 => {
-                self.timer.counter = value;
+                self.timer.state.counter = value;
             },
             0xFF06 => {
-                self.timer.modulo = value;
+                self.timer.state.modulo = value;
             },
             0xFF07 => {
-                self.timer.control = @bitCast(value);
+                self.timer.state.control = @bitCast(value);
             },
             0xFF40 => {
                 self.gpu.set_lcdc(value);
@@ -165,10 +163,10 @@ pub const Bus = struct {
                 self.gpu.set_lcdc_Status(value);
             },
             0xFF42 => {
-                self.gpu.scroll_y = value;
+                self.gpu.state.scroll_y = value;
             },
             0xFF43 => {
-                self.gpu.scroll_x = value;
+                self.gpu.state.scroll_x = value;
             },
             0xFF45 => {
                 self.gpu.set_lyc(value);
@@ -177,19 +175,19 @@ pub const Bus = struct {
                 self.gpu.request_dma_transfer(value);
             },
             0xFF47 => {
-                self.gpu.background_palette = @bitCast(value);
+                self.gpu.state.background_palette = @bitCast(value);
             },
             0xFF48 => {
-                self.gpu.object_palette[0] = @bitCast(value);
+                self.gpu.state.object_palette[0] = @bitCast(value);
             },
             0xFF49 => {
-                self.gpu.object_palette[1] = @bitCast(value);
+                self.gpu.state.object_palette[1] = @bitCast(value);
             },
             0xFF4A => {
-                self.gpu.window_y = value;
+                self.gpu.state.window_y = value;
             },
             0xFF4B => {
-                self.gpu.window_x = value;
+                self.gpu.state.window_x = value;
             },
             0xFEA0...0xFEFF => { //Not usable
                 std.debug.assert(false);

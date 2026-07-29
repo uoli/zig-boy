@@ -1,25 +1,31 @@
 pub const Timer = struct {
     bus: *Bus,
-    modulo: u8,
-    divider_register: u16,
-    counter: u8,
-    control: packed struct {
-        clock_select: u2,
-        timer_running: bool,
-        _: u5,
-    },
+    state: State,
+
+    const State = struct {
+        modulo: u8,
+        divider_register: u16,
+        counter: u8,
+        control: packed struct {
+            clock_select: u2,
+            timer_running: bool,
+            _: u5,
+        },
+    };
 
     pub fn init(bus: *Bus) Timer {
         return Timer{
             .bus = bus,
-            .modulo = 0,
-            .control = .{
-                .clock_select = 0,
-                .timer_running = false,
-                ._ = undefined,
+            .state = .{
+                .modulo = 0,
+                .divider_register = 0xffe6,
+                .counter = 0,
+                .control = .{
+                    .clock_select = 0,
+                    .timer_running = false,
+                    ._ = undefined,
+                },
             },
-            .divider_register = 0xffe6,
-            .counter = 0,
         };
     }
 
@@ -31,12 +37,12 @@ pub const Timer = struct {
         //timer_clock_2 = 1 -> 65536hz  in t-cycles, 64   times slower
         //timer_clock_3 = 1 -> 16384hz  in t-cycles, 256  times slower
 
-        const start_divider_val = self.divider_register;
-        self.divider_register +%= @intCast(cycles_elapsed * 4);
+        const start_divider_val = self.state.divider_register;
+        self.state.divider_register +%= @intCast(cycles_elapsed * 4);
 
-        if (self.control.timer_running) {
+        if (self.state.control.timer_running) {
             var counter_increase: u8 = 0;
-            switch (self.control.clock_select) {
+            switch (self.state.control.clock_select) {
                 0 => {
                     const timer4bit = (start_divider_val & 0b1111111111) + @as(u16, @intCast(cycles_elapsed * 4));
                     counter_increase = @intCast(timer4bit / 1024);
@@ -54,9 +60,9 @@ pub const Timer = struct {
                     counter_increase = @intCast(timer256bit / 256);
                 },
             }
-            self.counter, const overflow = @addWithOverflow(self.counter, counter_increase);
+            self.state.counter, const overflow = @addWithOverflow(self.state.counter, counter_increase);
             if (overflow == 1) {
-                self.counter = self.modulo;
+                self.state.counter = self.state.modulo;
                 self.bus.raise_cpu_interrupt(Cpu.Interrup.Timer);
             }
         }
