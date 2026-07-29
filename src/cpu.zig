@@ -77,46 +77,50 @@ fn init_tables(opcodetable: *[256]OpCodeInfo, jmptable: *[256]opFunc) void {
 
 pub const Cpu = struct {
     boot_rom: []const u8,
-    cycles_counter: u64,
     bus: *Bus,
     tracer: *Tracer,
-    r: Registers,
-    sp: u16,
-    pc: u16,
-    halted: bool,
-    interrupt: struct {
-        enabled: bool,
-        enable_delay_instructons: u8,
-        interrupt_flag: Interrupts,
-        interrupt_enabled: Interrupts,
-    },
-    disable_boot_rom: u8,
-
-    sound_flags: packed struct {
-        sound_1_enabled: u1,
-        sound_2_enabled: u1,
-        sound_3_enabled: u1,
-        sound_4_enabled: u1,
-        _: u3,
-        enabled: u1,
-    },
-    //Raw bytes written to the sound registers FF10-FF25. There is no APU yet, but
-    //reads must return the stored value with the write-only bits forced to 1.
-    sound_registers: [0x16]u8,
-    serial_data_transfer: struct {
-        data: u8,
-        control: packed struct {
-            shift_clock: bool,
-            clock_speed: bool,
-            _: u5,
-            transfer_start_flag: bool,
-        },
-    },
-
     opcodetable: [256]OpCodeInfo,
     jmptable: [256]opFunc,
     extended_opcodetable: [256]OpCodeInfo,
     extended_jmptable: [256]opFunc,
+
+    state: State,
+
+    pub const State = struct {
+        cycles_counter: u64,
+        r: Registers,
+        sp: u16,
+        pc: u16,
+        halted: bool,
+        interrupt: struct {
+            enabled: bool,
+            enable_delay_instructons: u8,
+            interrupt_flag: Interrupts,
+            interrupt_enabled: Interrupts,
+        },
+        disable_boot_rom: u8,
+
+        sound_flags: packed struct {
+            sound_1_enabled: u1,
+            sound_2_enabled: u1,
+            sound_3_enabled: u1,
+            sound_4_enabled: u1,
+            _: u3,
+            enabled: u1,
+        },
+        //Raw bytes written to the sound registers FF10-FF25. There is no APU yet, but
+        //reads must return the stored value with the write-only bits forced to 1.
+        sound_registers: [0x16]u8,
+        serial_data_transfer: struct {
+            data: u8,
+            control: packed struct {
+                shift_clock: bool,
+                clock_speed: bool,
+                _: u5,
+                transfer_start_flag: bool,
+            },
+        },
+    };
 
     pub fn init(boot_rom: []const u8, bus: *Bus, tracer: *Tracer) Cpu {
         var opcodetable: [256]OpCodeInfo = undefined;
@@ -484,66 +488,65 @@ pub const Cpu = struct {
             }
         }
 
-        //const opcodetable, const jmptable = process_opcodetable(&opcodesInfo, &opcodesFunc);
-        //const extended_opcodetable, const extended_jmptable = process_opcodetable(&extended_opcodesInfo, &extended_opcodesFunc);
-
         return Cpu{
             .boot_rom = boot_rom,
-            .cycles_counter = 0,
-            .disable_boot_rom = 0,
             .bus = bus,
-            .r = Registers.init(),
-            .sp = 0x0,
-            .pc = 0x0,
-            .halted = false,
+            .tracer = tracer,
             .opcodetable = opcodetable,
             .jmptable = jmptable,
             .extended_opcodetable = extended_opcodetable,
             .extended_jmptable = extended_jmptable,
-            .interrupt = .{
-                .enabled = true,
-                .enable_delay_instructons = 0,
-                .interrupt_enabled = .{
-                    .vblank = false,
-                    .lcd_stat = false,
-                    .timer = false,
-                    .serial = false,
-                    .joypad = false,
-                    ._ = undefined,
+            .state = .{
+                .cycles_counter = 0,
+                .disable_boot_rom = 0,
+                .r = Registers.init(),
+                .sp = 0x0,
+                .pc = 0x0,
+                .halted = false,
+                .interrupt = .{
+                    .enabled = true,
+                    .enable_delay_instructons = 0,
+                    .interrupt_enabled = .{
+                        .vblank = false,
+                        .lcd_stat = false,
+                        .timer = false,
+                        .serial = false,
+                        .joypad = false,
+                        ._ = undefined,
+                    },
+                    .interrupt_flag = .{
+                        .vblank = false,
+                        .lcd_stat = false,
+                        .timer = false,
+                        .serial = false,
+                        .joypad = false,
+                        ._ = undefined,
+                    },
                 },
-                .interrupt_flag = .{
-                    .vblank = false,
-                    .lcd_stat = false,
-                    .timer = false,
-                    .serial = false,
-                    .joypad = false,
-                    ._ = undefined,
+                .sound_flags = .{
+                    .sound_1_enabled = 0,
+                    .sound_2_enabled = 0,
+                    .sound_3_enabled = 0,
+                    .sound_4_enabled = 0,
+                    ._ = 0,
+                    .enabled = 0,
+                },
+                .sound_registers = [_]u8{0} ** 0x16,
+                .serial_data_transfer = .{
+                    .data = 0,
+                    .control = .{
+                        .shift_clock = false,
+                        .clock_speed = false,
+                        ._ = undefined,
+                        .transfer_start_flag = false,
+                    },
                 },
             },
-            .sound_flags = .{
-                .sound_1_enabled = 0,
-                .sound_2_enabled = 0,
-                .sound_3_enabled = 0,
-                .sound_4_enabled = 0,
-                ._ = 0,
-                .enabled = 0,
-            },
-            .sound_registers = [_]u8{0} ** 0x16,
-            .serial_data_transfer = .{
-                .data = 0,
-                .control = .{
-                    .shift_clock = false,
-                    .clock_speed = false,
-                    ._ = undefined,
-                    .transfer_start_flag = false,
-                },
-            },
-            .tracer = tracer,
         };
     }
 
     pub fn peek(self: *const Cpu, address: u16) u8 {
-        if (self.disable_boot_rom == 0 and address < 0x0100) {
+        if (self.state.disable_boot_rom == 0 and address < 0x0100) {
             return self.boot_rom[address];
         }
         switch (address) {
@@ -556,16 +559,16 @@ pub const Cpu = struct {
                     0xFF, 0xFF, 0x00, 0x00, 0xBF, //FF1F-FF23 unused,NR41-NR44
                     0x00, 0x00, //FF24-FF25 NR50-NR51
                 };
-                return self.sound_registers[address - 0xFF10] | read_masks[address - 0xFF10];
+                return self.state.sound_registers[address - 0xFF10] | read_masks[address - 0xFF10];
             },
             0xFF26 => { //NR52: unused bits 6-4 read as 1
-                return @as(u8, @bitCast(self.sound_flags)) | 0x70;
+                return @as(u8, @bitCast(self.state.sound_flags)) | 0x70;
             },
             0xFF0F => {
-                return @as(u8, @bitCast(self.interrupt.interrupt_flag)) | 0b11100000;
+                return @as(u8, @bitCast(self.state.interrupt.interrupt_flag)) | 0b11100000;
             },
             0xFFFF => {
-                return @bitCast(self.interrupt.interrupt_enabled);
+                return @bitCast(self.state.interrupt.interrupt_enabled);
             },
             else => {
                 return self.bus.read(address);
@@ -596,27 +599,27 @@ pub const Cpu = struct {
         self.bus.tick(1);
         switch (address) {
             0xFF01 => {
-                self.serial_data_transfer.data = value;
+                self.state.serial_data_transfer.data = value;
             },
             0xFF02 => {
                 //Serial Data Transfer? ignore for now
-                self.serial_data_transfer.control = @bitCast(value);
+                self.state.serial_data_transfer.control = @bitCast(value);
             },
 
             0xFF10...0xFF25 => {
-                self.sound_registers[address - 0xFF10] = value;
+                self.state.sound_registers[address - 0xFF10] = value;
             },
             0xFF26 => {
-                self.sound_flags = @bitCast(value);
+                self.state.sound_flags = @bitCast(value);
             },
             0xFF50 => {
-                self.disable_boot_rom = value;
+                self.state.disable_boot_rom = value;
             },
             0xFF0F => {
-                self.interrupt.interrupt_flag = @bitCast(value);
+                self.state.interrupt.interrupt_flag = @bitCast(value);
             },
             0xFFFF => {
-                self.interrupt.interrupt_enabled = @bitCast(value);
+                self.state.interrupt.interrupt_enabled = @bitCast(value);
             },
             else => {
                 self.bus.write(address, value);
@@ -625,14 +628,14 @@ pub const Cpu = struct {
     }
 
     pub fn fetch(self: *Cpu) u8 {
-        const result = self.load(self.pc);
-        self.pc += 1;
+        const result = self.load(self.state.pc);
+        self.state.pc += 1;
         return result;
     }
 
     pub fn fetch16(self: *Cpu) u16 {
-        const result: u16 = self.load16(self.pc);
-        self.pc += 2;
+        const result: u16 = self.load16(self.state.pc);
+        self.state.pc += 2;
         return result;
     }
 
@@ -640,17 +643,17 @@ pub const Cpu = struct {
         if (value == 0x60ed or value == 0x60e0 or value == 0x60dd or value == 0x60ca) {
             //@breakpoint();
         }
-        self.sp -= 1;
-        self.store(self.sp, @intCast(value >> 8));
-        self.sp -= 1;
-        self.store(self.sp, @intCast(value & 0xFF));
+        self.state.sp -= 1;
+        self.store(self.state.sp, @intCast(value >> 8));
+        self.state.sp -= 1;
+        self.store(self.state.sp, @intCast(value & 0xFF));
     }
 
     pub fn pop16(self: *Cpu) u16 {
-        const low = self.load(self.sp);
-        self.sp += 1;
-        const high = self.load(self.sp);
-        self.sp += 1;
+        const low = self.load(self.state.sp);
+        self.state.sp += 1;
+        const high = self.load(self.state.sp);
+        self.state.sp += 1;
         return @as(u16, high) << 8 | low;
     }
 
@@ -662,7 +665,7 @@ pub const Cpu = struct {
 
         if (instruction == 0xCB) {
             const extended_instruction = self.fetch();
-            if (extended_instruction == 124 and self.disable_boot_rom == 1) {
+            if (extended_instruction == 124 and self.state.disable_boot_rom == 1) {
                 //@breakpoint();
             }
             const func = self.extended_jmptable[extended_instruction];
@@ -682,7 +685,7 @@ pub const Cpu = struct {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu step" });
         defer zone.end();
 
-        if (self.halted) {
+        if (self.state.halted) {
             self.bus.tick(1);
             return 1;
         }
@@ -693,22 +696,22 @@ pub const Cpu = struct {
         const interrup_clocks = execute_interrupts_if_enabled(self);
         const interrupt_ticks_emitted = self.bus.ticks_emitted - interrupt_ticks_before;
         if (interrup_clocks > interrupt_ticks_emitted) self.bus.tick(interrup_clocks - interrupt_ticks_emitted);
-        self.cycles_counter += interrup_clocks;
+        self.state.cycles_counter += interrup_clocks;
 
         const instruction_ticks_before = self.bus.ticks_emitted;
         const instruction_clock = self.decode_and_execute();
         const instruction_ticks_emitted = self.bus.ticks_emitted - instruction_ticks_before;
         if (instruction_clock > instruction_ticks_emitted) self.bus.tick(instruction_clock - instruction_ticks_emitted);
-        self.cycles_counter += instruction_clock;
+        self.state.cycles_counter += instruction_clock;
 
-        //Logger.log("clocks: {d}\n", .{self.cycles_counter});
+        //Logger.log("clocks: {d}\n", .{self.state.cycles_counter});
         return interrup_clocks + instruction_clock;
     }
 
     fn execute_interrupt(self: *Cpu, interrupt_address: u16) mcycles {
         Logger.log("Interrupt 0x{x}\n", .{interrupt_address});
-        self.push16(self.pc);
-        self.pc = interrupt_address;
+        self.push16(self.state.pc);
+        self.state.pc = interrupt_address;
         return 5;
     }
 
@@ -722,21 +725,21 @@ pub const Cpu = struct {
 
     pub fn raise_interrupt(self: *Cpu, interrupt: Interrup) void {
         const interrupt_bit_mask: u8 = @intFromEnum(interrupt);
-        const current_interrupts: u8 = @bitCast(self.interrupt.interrupt_flag);
+        const current_interrupts: u8 = @bitCast(self.state.interrupt.interrupt_flag);
         const new_bitmask = interrupt_bit_mask | current_interrupts;
-        self.interrupt.interrupt_flag = @bitCast(new_bitmask);
+        self.state.interrupt.interrupt_flag = @bitCast(new_bitmask);
 
-        if (@as(u8, @bitCast(self.interrupt.interrupt_enabled)) & interrupt_bit_mask != 0) {
-            self.halted = false;
+        if (@as(u8, @bitCast(self.state.interrupt.interrupt_enabled)) & interrupt_bit_mask != 0) {
+            self.state.halted = false;
         }
     }
 
     fn execute_interrupts_if_enabled(self: *Cpu) mcycles {
-        if (!self.interrupt.enabled) {
+        if (!self.state.interrupt.enabled) {
             return 0;
         }
-        if (self.interrupt.enable_delay_instructons > 0) {
-            self.interrupt.enable_delay_instructons -= 1;
+        if (self.state.interrupt.enable_delay_instructons > 0) {
+            self.state.interrupt.enable_delay_instructons -= 1;
             return 0;
         }
 
@@ -749,12 +752,12 @@ pub const Cpu = struct {
         };
 
         for (bitMaskToInterrupt) |mask| {
-            const enabled_interrupts_bitfield: u8 = @bitCast(self.interrupt.interrupt_enabled);
-            const current_interrupts_bitfield: u8 = @bitCast(self.interrupt.interrupt_flag);
+            const enabled_interrupts_bitfield: u8 = @bitCast(self.state.interrupt.interrupt_enabled);
+            const current_interrupts_bitfield: u8 = @bitCast(self.state.interrupt.interrupt_flag);
             const interrupts_to_execute_bitfield: u8 = enabled_interrupts_bitfield & current_interrupts_bitfield;
             if (interrupts_to_execute_bitfield & mask[0] != 0) {
-                self.interrupt.enabled = false;
-                self.interrupt.interrupt_flag = @bitCast(current_interrupts_bitfield & ~mask[0]);
+                self.state.interrupt.enabled = false;
+                self.state.interrupt.interrupt_flag = @bitCast(current_interrupts_bitfield & ~mask[0]);
                 return self.execute_interrupt(mask[1]);
             }
         }

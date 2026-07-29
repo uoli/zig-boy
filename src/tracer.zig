@@ -42,7 +42,7 @@ pub const Tracer = struct {
         };
         //const watched_pcs = [_]u16{};
         //const watched_pc = 0xFFFF;
-        if (contains(u16, &watched_pcs, cpu.pc) == true)
+        if (contains(u16, &watched_pcs, cpu.state.pc) == true)
             self.enable_trace = true;
 
         if (self.enable_trace)
@@ -52,7 +52,7 @@ pub const Tracer = struct {
     fn print_trace(cpu: *const Cpu) void {
         const zone = tracy.beginZone(@src(), .{ .name = "cpu print_trace" });
         defer zone.end();
-        var tmp_ip = cpu.pc;
+        var tmp_ip = cpu.state.pc;
         var opcode = cpu.peek(tmp_ip);
         tmp_ip += 1;
         const is_extopcode = opcode == 0xCB;
@@ -79,7 +79,7 @@ pub const Tracer = struct {
             },
             .None => {},
         }
-        Logger.log("[CPU] 0x{x:04} 0x{x:02} {s: <12}{s} AF:0x{x:04} BC:0x{x:04} DE:0x{x:04} HL:0x{x:04} SP:0x{x:04} {s} {d}\n", .{ cpu.pc, opInfo.code, opInfo.name, args_str, cpu.r.f.AF, cpu.r.f.BC, cpu.r.f.DE, cpu.r.f.HL, cpu.sp, cpu.r.debug_flag_str(), cpu.cycles_counter });
+        Logger.log("[CPU] 0x{x:04} 0x{x:02} {s: <12}{s} AF:0x{x:04} BC:0x{x:04} DE:0x{x:04} HL:0x{x:04} SP:0x{x:04} {s} {d}\n", .{ cpu.state.pc, opInfo.code, opInfo.name, args_str, cpu.state.r.f.AF, cpu.state.r.f.BC, cpu.state.r.f.DE, cpu.state.r.f.HL, cpu.state.sp, cpu.state.r.debug_flag_str(), cpu.state.cycles_counter });
     }
 };
 

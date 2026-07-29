@@ -240,7 +240,7 @@ pub const Gpu = struct {
                     self.check_lyc();
                     self.tracer.gpu_mode_trace(self);
                     if (self.lcd_status.mode == 1) { //Start V-Blank
-                        Logger.log("start vblank frame {d}, cpu cycles {d}\n", .{ self.dbg_frame_count, self.bus.cpu.cycles_counter });
+                        Logger.log("start vblank frame {d}, cpu cycles {d}\n", .{ self.dbg_frame_count, self.bus.cpu.state.cycles_counter });
                         self.bus.raise_cpu_interrupt(Cpu.Interrup.VBlank);
                         self.dbg_frame_count += 1;
                         self.wly = 0;
